@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sky-walker"
+version = "0.1.0"
+description = "Override a USB-connected iPhone's GPS location from Windows, for testing iOS apps."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    # See docs/adr/0001 — the whole tool is built on this, imported as a library.
+    "pymobiledevice3>=10.7",
+]
+
+[project.scripts]
+sky-walker = "sky_walker.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
