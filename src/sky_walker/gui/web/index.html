@@ -40,6 +40,18 @@
     .pin { width: 16px; height: 16px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
     .pin.candidate { background: #1e6fe0; }
     .pin.active { background: #1a7f37; }
+    .pin.moving { background: #f59e0b; }
+    .wp-badge { width: 20px; height: 20px; border-radius: 50%; background: #7c3aed; color: #fff;
+      border: 2px solid #fff; display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+
+    .modes { display: flex; gap: 6px; margin-bottom: 8px; }
+    .modes button { flex: 1; padding: 6px; font-size: 13px; cursor: pointer; border: 1px solid #ccc; border-radius: 6px; background: #fff; }
+    .modes button.on { background: #111; color: #fff; border-color: #111; }
+    .hidden { display: none; }
+    #route-controls label { display: block; font-size: 12px; margin-top: 8px; }
+    #route-controls input { width: 100%; box-sizing: border-box; padding: 6px; font-size: 13px; }
+    #wp-list { font-size: 12px; color: #444; margin: 4px 0; }
 
     #statusbar {
       position: absolute; bottom: 0; left: 0; right: 0; z-index: 1000;
@@ -78,21 +90,57 @@
 
   <div id="panel">
     <h1>Sky Walker</h1>
-    <input id="coord" type="text" placeholder="lat, lng — click map or type" />
-    <div class="row">
-      <button id="go">Teleport here</button>
-      <button id="clr">Clear</button>
+    <div class="modes">
+      <button id="mode-teleport" class="on">Teleport</button>
+      <button id="mode-route">Route</button>
     </div>
-    <div class="legend">
-      <div><span class="dot" style="background:#1e6fe0"></span>Candidate (where to go)</div>
-      <div><span class="dot" style="background:#1a7f37"></span>Active (device is here)</div>
+
+    <div id="teleport-controls">
+      <input id="coord" type="text" placeholder="lat, lng — click map or type" />
+      <div class="row">
+        <button id="go">Teleport here</button>
+      </div>
+      <div class="legend">
+        <div><span class="dot" style="background:#1e6fe0"></span>Candidate (where to go)</div>
+        <div><span class="dot" style="background:#1a7f37"></span>Active (device is here)</div>
+      </div>
     </div>
+
+    <div id="route-controls" class="hidden">
+      <div id="wp-list">Waypoints: none — click the map (up to 3)</div>
+      <label>Speed (km/h)<input id="route-speed" type="number" min="1" step="1" value="50" /></label>
+      <label>Round trips<input id="route-loops" type="number" min="1" step="1" value="1" /></label>
+      <label style="display:flex;align-items:center;gap:6px;">
+        <input id="route-infinite" type="checkbox" style="width:auto;" /> Infinite (until Stop)
+      </label>
+      <div class="row">
+        <button id="route-start" style="background:#1a7f37;color:#fff;border-color:#1a7f37">Start</button>
+        <button id="route-stop">Stop</button>
+        <button id="route-reset">Reset</button>
+      </div>
+      <div class="legend">
+        <div><span class="dot" style="background:#7c3aed"></span>Waypoint (order = 1,2,3)</div>
+        <div><span class="dot" style="background:#f59e0b"></span>Moving (device is here)</div>
+      </div>
+
+      <hr style="margin:10px 0;border:none;border-top:1px solid #ddd;" />
+      <label>Save current waypoints as<input id="path-name" type="text" placeholder="path name" /></label>
+      <div class="row"><button id="path-save">Save path</button></div>
+      <label>Saved paths<select id="path-select" style="width:100%;padding:6px;font-size:13px;"></select></label>
+      <div class="row">
+        <button id="path-load">Load</button>
+        <button id="path-delete">Delete</button>
+      </div>
+    </div>
+
+    <div class="row"><button id="clr">Clear</button></div>
   </div>
 
   <div id="statusbar">
     <span id="st-device">device: —</span>
     <span id="st-conn" class="conn down">● disconnected</span>
     <span id="st-override">override: —</span>
+    <span id="st-route"></span>
   </div>
 
   <div id="gate" class="overlay">
@@ -118,9 +166,13 @@
   <script>
     const api = () => window.pywebview.api;
     let map, candidateMarker, activeMarker, candidate = null, mapReady = false;
+    let mode = 'teleport';
+    let waypoints = [], wpMarkers = [], movingMarker = null, routePoll = null;
 
     const candidateIcon = () => L.divIcon({ className: '', html: '<div class="pin candidate"></div>', iconSize: [16, 16], iconAnchor: [8, 16] });
     const activeIcon = () => L.divIcon({ className: '', html: '<div class="pin active"></div>', iconSize: [16, 16], iconAnchor: [8, 16] });
+    const movingIcon = () => L.divIcon({ className: '', html: '<div class="pin moving"></div>', iconSize: [16, 16], iconAnchor: [8, 16] });
+    const wpIcon = (n) => L.divIcon({ className: '', html: `<div class="wp-badge">${n}</div>`, iconSize: [20, 20], iconAnchor: [10, 10] });
 
     const $ = (id) => document.getElementById(id);
     function showError(t) { $('banner').textContent = t; $('banner').style.display = 'block'; }
@@ -209,10 +261,14 @@
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19, attribution: '&copy; OpenStreetMap contributors',
       }).addTo(map);
-      map.on('click', (e) => setCandidate(e.latlng.lat, e.latlng.lng, false));
+      map.on('click', (e) => {
+        if (mode === 'route') addWaypoint(e.latlng.lat, e.latlng.lng);
+        else setCandidate(e.latlng.lat, e.latlng.lng, false);
+      });
       $('panel').style.display = 'block';
       mapReady = true;
       await primeDefault();
+      await refreshPaths();
     }
 
     async function doTeleport() {
@@ -222,9 +278,13 @@
       await refreshStatus();
     }
     async function doClear() {
-      const res = await api().clear();
-      if (res.ok) { clearError(); if (activeMarker) { map.removeLayer(activeMarker); activeMarker = null; } }
-      else showError(errText(res));
+      const res = await api().clear();  // also stops any running route (server-side)
+      if (res.ok) {
+        clearError();
+        if (activeMarker) { map.removeLayer(activeMarker); activeMarker = null; }
+        if (movingMarker) { map.removeLayer(movingMarker); movingMarker = null; }
+        finishRoute();
+      } else showError(errText(res));
       await refreshStatus();
     }
 
@@ -236,6 +296,13 @@
       conn.className = 'conn' + (s.connected ? '' : ' down');
       $('st-override').textContent = 'override: ' +
         (s.override ? `${s.override.lat.toFixed(6)}, ${s.override.lng.toFixed(6)}` : 'none');
+      if (s.playing && s.progress) {
+        const p = s.progress;
+        const total = p.total === null ? '∞' : p.total;
+        $('st-route').textContent = `route: Round Trip ${p.trip}/${total}` + (p.leg ? `, leg ${p.leg}` : '');
+      } else {
+        $('st-route').textContent = '';
+      }
     }
 
     // --- doctor panel (ticket 06) ------------------------------------------
@@ -245,16 +312,141 @@
       $('doctor').style.display = 'block';
     }
 
+    // --- Route Playback (ticket 02) ----------------------------------------
+    function setMode(m) {
+      if (routePoll) return;  // don't switch modes while a route is playing
+      mode = m;
+      $('mode-teleport').classList.toggle('on', m === 'teleport');
+      $('mode-route').classList.toggle('on', m === 'route');
+      $('teleport-controls').classList.toggle('hidden', m !== 'teleport');
+      $('route-controls').classList.toggle('hidden', m !== 'route');
+    }
+
+    function renderWaypoints() {
+      $('wp-list').textContent = waypoints.length
+        ? 'Waypoints: ' + waypoints.map((w, i) => `${i + 1} (${w.lat.toFixed(4)}, ${w.lng.toFixed(4)})`).join('   ')
+        : 'Waypoints: none — click the map (up to 3)';
+    }
+    function addWaypoint(lat, lng) {
+      if (waypoints.length >= 3) { showError('A route takes at most 3 waypoints — Reset to change.'); return; }
+      waypoints.push({ lat, lng });
+      wpMarkers.push(L.marker([lat, lng], { icon: wpIcon(waypoints.length) }).addTo(map));
+      renderWaypoints();
+    }
+    function resetWaypoints() {
+      waypoints = [];
+      wpMarkers.forEach((m) => map.removeLayer(m));
+      wpMarkers = [];
+      renderWaypoints();
+    }
+
+    // idle = not playing: Start/Reset/mode/manual-teleport enabled, Stop disabled
+    function setRouteEnabled(idle) {
+      $('route-start').disabled = !idle;
+      $('route-reset').disabled = !idle;
+      $('route-speed').disabled = !idle;
+      $('route-loops').disabled = !idle;
+      $('route-infinite').disabled = !idle;
+      $('path-save').disabled = !idle;
+      $('path-load').disabled = !idle;
+      $('path-delete').disabled = !idle;
+      $('route-stop').disabled = idle;
+      $('mode-teleport').disabled = !idle;
+      $('mode-route').disabled = !idle;
+      $('go').disabled = !idle;
+    }
+
+    function finishRoute() {
+      if (routePoll) { clearInterval(routePoll); routePoll = null; }
+      setRouteEnabled(true);
+    }
+
+    async function pollRoute() {
+      const s = await api().status();
+      if (s.route_position) {
+        const ll = [s.route_position.lat, s.route_position.lng];
+        if (!movingMarker) movingMarker = L.marker(ll, { icon: movingIcon(), zIndexOffset: 1200 }).addTo(map);
+        else movingMarker.setLatLng(ll);
+      }
+      await refreshStatus();
+      if (!s.playing) finishRoute();  // route ran to completion; holds last point
+    }
+
+    async function startRoute() {
+      if (waypoints.length < 2) { showError('Place at least two waypoints.'); return; }
+      const speed = parseFloat($('route-speed').value);
+      if (!(speed > 0)) { showError('Speed must be a positive number.'); return; }
+      const infinite = $('route-infinite').checked;
+      const loops = infinite ? null : parseInt($('route-loops').value, 10);
+      if (!infinite && !(loops >= 1)) { showError('Round trips must be at least 1.'); return; }
+      const res = await api().start_route(waypoints, speed, loops);
+      if (!res.ok) { showError(errText(res)); return; }
+      clearError();
+      setRouteEnabled(false);
+      routePoll = setInterval(pollRoute, 500);
+    }
+
+    async function stopRoute() {
+      await api().stop_route();
+      finishRoute();
+    }
+
+    // --- Saved Paths (ticket 04) -------------------------------------------
+    async function refreshPaths() {
+      const names = await api().list_paths();
+      const sel = $('path-select');
+      sel.innerHTML = '';
+      for (const n of names) {
+        const o = document.createElement('option');
+        o.value = n; o.textContent = n;
+        sel.appendChild(o);
+      }
+    }
+    async function doSavePath() {
+      const res = await api().save_path($('path-name').value, waypoints);
+      if (!res.ok) { showError(errText(res)); return; }
+      clearError();
+      $('path-name').value = '';
+      await refreshPaths();
+    }
+    async function doLoadPath() {
+      const name = $('path-select').value;
+      if (!name) return;
+      const res = await api().load_path(name);
+      if (!res.ok) { showError(errText(res)); return; }
+      resetWaypoints();
+      for (const w of res.waypoints) addWaypoint(w.lat, w.lng);
+      clearError();
+    }
+    async function doDeletePath() {
+      const name = $('path-select').value;
+      if (!name) return;
+      await api().delete_path(name);
+      await refreshPaths();
+    }
+
     // --- hot-plug reconnect (ticket 08) ------------------------------------
     function setEnabled(on) {
       $('go').disabled = !on;
       $('clr').disabled = !on;
     }
 
+    // Disable/enable every route + save control together (used on hot-plug).
+    function disableRouteControls(disabled) {
+      ['route-start', 'route-stop', 'route-reset', 'route-speed', 'route-loops',
+       'route-infinite', 'path-save', 'path-load', 'path-delete',
+       'mode-teleport', 'mode-route'].forEach((id) => { $(id).disabled = disabled; });
+    }
+
     // Called from Python (app.py) when the tracked device disappears.
     window.skyOnLost = async function () {
+      // The route (if any) is already torn down server-side; mirror it here:
+      // stop polling, drop the moving pin, and lock every control.
+      if (routePoll) { clearInterval(routePoll); routePoll = null; }
+      if (movingMarker) { map.removeLayer(movingMarker); movingMarker = null; }
       setEnabled(false);
-      showError('Device disconnected — reconnect the cable to continue.');
+      disableRouteControls(true);
+      showError('Device disconnected — route stopped. Reconnect the cable to continue.');
       await refreshStatus();
     };
 
@@ -263,6 +455,8 @@
       const res = await api().begin();  // reopen the tunnel (does not move GPS)
       if (!res.ok) { showError(errText(res)); return; }
       setEnabled(true);
+      disableRouteControls(false);
+      setRouteEnabled(true);  // back to the idle baseline (Stop disabled)
       clearError();
       await refreshStatus();
       const la = await api().last_active();
@@ -297,6 +491,15 @@
       $('gate-retry').addEventListener('click', runGate);
       $('reconnect-yes').addEventListener('click', reapplyYes);
       $('reconnect-no').addEventListener('click', () => { $('reconnect').style.display = 'none'; });
+      $('mode-teleport').addEventListener('click', () => setMode('teleport'));
+      $('mode-route').addEventListener('click', () => setMode('route'));
+      $('route-start').addEventListener('click', startRoute);
+      $('route-stop').addEventListener('click', stopRoute);
+      $('route-reset').addEventListener('click', resetWaypoints);
+      $('path-save').addEventListener('click', doSavePath);
+      $('path-load').addEventListener('click', doLoadPath);
+      $('path-delete').addEventListener('click', doDeletePath);
+      setRouteEnabled(true);  // Stop starts disabled until a route runs
     }
 
     async function boot() { wire(); await runGate(); }

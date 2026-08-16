@@ -11,6 +11,7 @@ from sky_walker.device import Device
 from sky_walker.doctor import Check, DoctorReport
 from sky_walker.errors import NoDeviceError, TunnelError
 from sky_walker.gui.bridge import Bridge
+from sky_walker.gui.route import Step
 
 
 class FakeOverride:
@@ -37,15 +38,62 @@ class FakeOverride:
         self.cleared += 1
 
 
+class FakePlayer:
+    def __init__(self, sink, on_progress, on_finish):
+        self.sink = sink
+        self.on_progress = on_progress
+        self.on_finish = on_finish
+        self.items = None         # the Step stream the bridge built
+        self.started = False
+        self.stopped = 0
+        self.running = False
+
+    def start(self, items):
+        self.items = items
+        self.started = True
+        self.running = True
+
+    def stop(self):
+        self.stopped += 1
+        self.running = False
+
+
+# players created by the bridge under test are captured here
+_players = []
+
+
+class FakeStore:
+    def __init__(self):
+        self.data = {}
+
+    def names(self):
+        return sorted(self.data)
+
+    def save(self, name, waypoints):
+        self.data[name] = waypoints
+
+    def load(self, name):
+        return self.data.get(name)
+
+    def delete(self, name):
+        self.data.pop(name, None)
+
+
 def make_bridge(*, device=None, override=None, preflight=None, devices=None,
-                select_error=None):
+                select_error=None, path_store=None):
     device = device or Device("ABC123", "17.4")
     override = override if override is not None else FakeOverride()
+    _players.clear()
 
     def selector(udid):
         if select_error is not None:
             raise select_error
         return device
+
+    def player_factory(sink, on_progress, on_finish):
+        p = FakePlayer(sink, on_progress, on_finish)
+        _players.append(p)
+        return p
 
     return Bridge(
         DEFAULT_LOCATION,
@@ -53,6 +101,8 @@ def make_bridge(*, device=None, override=None, preflight=None, devices=None,
         device_lister=lambda: devices if devices is not None else [device],
         device_selector=selector,
         override_factory=lambda d: override,
+        player_factory=player_factory,
+        path_store=path_store or FakeStore(),
     ), override, device
 
 
@@ -235,3 +285,133 @@ def test_validate_coordinate_enforces_range():
     res = bridge.validate_coordinate(999.0, 0.0)
     assert res["ok"] is False
     assert res["error"]
+
+
+# --- Route Playback (ticket 02) ---------------------------------------------
+
+def _wps(*pairs):
+    return [{"lat": la, "lng": ln} for la, ln in pairs]
+
+
+def test_start_route_requires_session():
+    bridge, _, _ = make_bridge()  # not begun
+    assert bridge.start_route(_wps((0, 0), (0, 1)), 50, 1)["ok"] is False
+
+
+def test_start_route_needs_two_waypoints():
+    bridge, _, _ = started()
+    assert bridge.start_route(_wps((0, 0)), 50, 1)["ok"] is False
+    assert not _players  # no player created for invalid input
+
+
+def test_start_route_rejects_nonpositive_speed():
+    bridge, _, _ = started()
+    assert bridge.start_route(_wps((0, 0), (0, 1)), 0, 1)["ok"] is False
+
+
+def test_start_route_rejects_more_than_three_waypoints():
+    bridge, _, _ = started()
+    res = bridge.start_route(_wps((0, 0), (0, 1), (1, 1), (1, 0)), 50, 1)
+    assert res["ok"] is False
+    assert not _players  # never started
+
+
+def test_start_route_rejects_non_integer_loops():
+    bridge, _, _ = started()
+    res = bridge.start_route(_wps((0, 0), (0, 1)), 50, "lots")
+    assert res["ok"] is False        # clean failure, not an exception
+    assert not _players
+
+
+def test_start_route_starts_player_and_marks_playing():
+    bridge, _, _ = started()
+    res = bridge.start_route(_wps((1, 2), (3, 4), (5, 6)), 50, 3)
+    assert res["ok"] is True
+    player = _players[-1]
+    first = next(iter(player.items))            # the stream starts on waypoint A
+    assert first.coord == Coordinate(1, 2)
+    assert first.total == 3                     # loop count carried into the stream
+    assert bridge.status()["playing"] is True
+
+
+def test_infinite_loops_passed_as_none():
+    bridge, _, _ = started()
+    bridge.start_route(_wps((0, 0), (0, 1)), 50, None)
+    assert next(iter(_players[-1].items)).total is None
+
+
+def test_teleport_refused_while_playing():
+    bridge, override, _ = started()
+    bridge.start_route(_wps((0, 0), (0, 1)), 50, 1)
+    res = bridge.teleport(10, 20)
+    assert res["ok"] is False
+    assert Coordinate(10, 20) not in override.teleports
+
+
+def test_clear_stops_running_route():
+    bridge, _, _ = started()
+    bridge.start_route(_wps((0, 0), (0, 1)), 50, 1)
+    bridge.clear()
+    assert _players[-1].stopped >= 1
+    assert bridge.status()["playing"] is False
+
+
+def test_stop_route_stops_player():
+    bridge, _, _ = started()
+    bridge.start_route(_wps((0, 0), (0, 1)), 50, 1)
+    bridge.stop_route()
+    assert _players[-1].stopped >= 1
+
+
+def test_shutdown_stops_running_route():
+    bridge, _, _ = started()
+    bridge.start_route(_wps((0, 0), (0, 1)), 50, 1)
+    bridge.shutdown()
+    assert _players[-1].stopped >= 1
+
+
+def test_driver_sink_moves_device_and_updates_position():
+    bridge, override, _ = started()
+    bridge.start_route(_wps((0, 0), (0, 1)), 50, 1)
+    player = _players[-1]
+    step = Step(Coordinate(7.0, 8.0), trip=2, total=5, leg="B→C")
+    player.sink(step)                     # simulate one driver tick
+    player.on_progress(0, step)
+    assert override.teleports[-1] == Coordinate(7.0, 8.0)
+    s = bridge.status()
+    assert s["route_position"] == {"lat": 7.0, "lng": 8.0}
+    assert s["progress"] == {"trip": 2, "total": 5, "leg": "B→C"}
+
+
+# --- Saved Paths (ticket 04) ------------------------------------------------
+
+def test_save_then_list_and_load_path():
+    bridge, _, _ = started()
+    res = bridge.save_path("home", _wps((1, 2), (3, 4)))
+    assert res["ok"] is True and res["paths"] == ["home"]
+    assert bridge.list_paths() == ["home"]
+    loaded = bridge.load_path("home")
+    assert loaded["ok"] is True
+    assert loaded["waypoints"] == [{"lat": 1.0, "lng": 2.0}, {"lat": 3.0, "lng": 4.0}]
+
+
+def test_save_path_rejects_blank_name():
+    bridge, _, _ = started()
+    assert bridge.save_path("  ", _wps((1, 2), (3, 4)))["ok"] is False
+
+
+def test_save_path_needs_two_waypoints():
+    bridge, _, _ = started()
+    assert bridge.save_path("x", _wps((1, 2)))["ok"] is False
+
+
+def test_load_missing_path_fails():
+    bridge, _, _ = started()
+    assert bridge.load_path("ghost")["ok"] is False
+
+
+def test_delete_path():
+    bridge, _, _ = started()
+    bridge.save_path("home", _wps((1, 2), (3, 4)))
+    res = bridge.delete_path("home")
+    assert res["ok"] is True and res["paths"] == []

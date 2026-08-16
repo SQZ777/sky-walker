@@ -15,8 +15,24 @@ Setting the override to a single static coordinate and holding it there. The MVP
 _Avoid_: jump, set point
 
 **Route Playback**:
-Feeding a sequence of coordinates (e.g. from a GPX file) so the device appears to move along a path. A later capability, distinct from Teleport.
+Moving the override along an ordered path of Waypoints so the device appears to travel, rather than holding one point. Distinct from Teleport.
 _Avoid_: simulate movement, drive, track
+
+**Waypoint**:
+One of the ordered points that define a Route Playback path. The path is traversed as a Round Trip.
+_Avoid_: node, marker, stop
+
+**Round Trip**:
+One complete out-and-back traversal of the Waypoints, returning to the start (e.g. A→B→C→B→A). The unit that Route Playback's loop count counts.
+_Avoid_: lap, cycle, loop (as the noun for a single pass), ping-pong
+
+**Movement Speed**:
+The ground speed at which the simulated position advances between Waypoints during Route Playback.
+_Avoid_: velocity, pace, rate
+
+**Saved Path**:
+A named, persisted ordered set of Waypoints the user can reload for Route Playback.
+_Avoid_: route, preset, favorite
 
 **Session**:
 The live connection during which a Location Override is in effect. When the Session ends (cleared, process exits, or device reboots) the device returns to its real GPS.
