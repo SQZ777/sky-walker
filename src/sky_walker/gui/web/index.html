@@ -165,7 +165,14 @@
       const res = await api().begin(udid);
       if (!res.ok) { showError(errText(res)); return; }
       clearError();
-      if (!mapReady) await startMap(); else await primeDefault();
+      if (!mapReady) {
+        await startMap();  // first launch: prime the Default Location (matches CLI)
+      } else if (activeMarker) {
+        // Device switch: the tunnel is reopened but we do NOT move the new
+        // device's GPS — teleporting stays an explicit action (ADR-0002).
+        map.removeLayer(activeMarker);
+        activeMarker = null;
+      }
       await refreshStatus();
     }
 
@@ -275,10 +282,14 @@
     function wire() {
       $('go').addEventListener('click', doTeleport);
       $('clr').addEventListener('click', doClear);
-      $('coord').addEventListener('keydown', (e) => {
+      $('coord').addEventListener('keydown', async (e) => {
         if (e.key !== 'Enter') return;
         const c = parseCoordField();
-        if (c) setCandidate(c.lat, c.lng, true); else showError('Type a coordinate as "lat, lng".');
+        if (!c) { showError('Type a coordinate as "lat, lng".'); return; }
+        // Validate through the same rule a teleport uses (config.parse_coordinate).
+        const v = await api().validate_coordinate(c.lat, c.lng);
+        if (v.ok) { clearError(); setCandidate(v.lat, v.lng, true); }
+        else showError(errText(v));
       });
       $('device-select').addEventListener('change', (e) => beginWith(e.target.value));
       $('doctor-btn').addEventListener('click', openDoctor);

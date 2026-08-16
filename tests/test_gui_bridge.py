@@ -219,3 +219,19 @@ def test_reapply_reteleports_last_after_reconnect():
 def test_reapply_with_nothing_to_reapply():
     bridge, _, _ = started()
     assert bridge.reapply()["ok"] is False
+
+
+# --- coordinate validation without teleporting (ticket 03) ------------------
+
+def test_validate_coordinate_ok_does_not_touch_device():
+    bridge, override, _ = started()
+    res = bridge.validate_coordinate(25.0, 121.0)
+    assert res == {"ok": True, "lat": 25.0, "lng": 121.0}
+    assert override.teleports == []  # validation must NOT drive the device
+
+
+def test_validate_coordinate_enforces_range():
+    bridge, _, _ = started()
+    res = bridge.validate_coordinate(999.0, 0.0)
+    assert res["ok"] is False
+    assert res["error"]

@@ -103,9 +103,7 @@ class Bridge:
 
     def last_active(self) -> Optional[Dict[str, float]]:
         """The last coordinate teleported to, even across a disconnect."""
-        if self._last is None:
-            return None
-        return {"lat": self._last.latitude, "lng": self._last.longitude}
+        return _coord_dict(self._last) if self._last is not None else None
 
     def reapply(self) -> Dict[str, Any]:
         """Re-teleport the last override (used after a reconnect)."""
@@ -122,7 +120,19 @@ class Bridge:
 
     def default_location(self) -> Dict[str, float]:
         """The coordinate the map should center on at startup."""
-        return {"lat": self._default.latitude, "lng": self._default.longitude}
+        return _coord_dict(self._default)
+
+    def validate_coordinate(self, lat: Any, lng: Any) -> Dict[str, Any]:
+        """Validate a coordinate WITHOUT teleporting (the coord-box Enter path).
+
+        Reuses config.parse_coordinate so the map-move validation is the same
+        rule as an actual teleport — no second, looser parser in the front-end.
+        """
+        try:
+            coord = parse_coordinate(f"{lat}, {lng}")
+        except ValueError as exc:
+            return _err(exc)
+        return {"ok": True, **_coord_dict(coord)}
 
     def teleport(self, lat: Any, lng: Any) -> Dict[str, Any]:
         """Validate a coordinate and drive the held override.
@@ -133,28 +143,28 @@ class Bridge:
         try:
             coord = parse_coordinate(f"{lat}, {lng}")
         except ValueError as exc:
-            return {"ok": False, "error": str(exc), "hint": ""}
+            return _err(exc)
 
         if self._override is None:
-            return {"ok": False, "error": "No active session.", "hint": ""}
+            return _fail("No active session.")
 
         try:
             self._override.teleport(coord)
         except SkyWalkerError as exc:
-            return {"ok": False, "error": str(exc), "hint": exc.hint}
+            return _err(exc)
 
         self._active = coord
         self._last = coord
-        return {"ok": True, "lat": coord.latitude, "lng": coord.longitude}
+        return {"ok": True, **_coord_dict(coord)}
 
     def clear(self) -> Dict[str, Any]:
         """Release the override; the device returns to its real GPS."""
         if self._override is None:
-            return {"ok": False, "error": "No active session.", "hint": ""}
+            return _fail("No active session.")
         try:
             self._override.clear()
         except SkyWalkerError as exc:
-            return {"ok": False, "error": str(exc), "hint": exc.hint}
+            return _err(exc)
         self._active = None
         return {"ok": True}
 
@@ -166,11 +176,26 @@ class Bridge:
             "ios": self._device.ios_version if self._device else None,
             "connected": connected,
             "override": (
-                {"lat": self._active.latitude, "lng": self._active.longitude}
+                _coord_dict(self._active)
                 if (connected and self._active is not None)
                 else None
             ),
         }
+
+
+# --- small result shapers ---------------------------------------------------
+
+def _coord_dict(coord: Coordinate) -> Dict[str, float]:
+    return {"lat": coord.latitude, "lng": coord.longitude}
+
+
+def _err(exc: Exception) -> Dict[str, Any]:
+    """Failure dict from an exception, reusing its .hint when it has one."""
+    return {"ok": False, "error": str(exc), "hint": getattr(exc, "hint", "")}
+
+
+def _fail(message: str) -> Dict[str, Any]:
+    return {"ok": False, "error": message, "hint": ""}
 
 
 # --- default (real) collaborators -------------------------------------------
