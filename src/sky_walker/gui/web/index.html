@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sky Walker</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
+    #map { position: absolute; inset: 0; }
+
+    #banner {
+      position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+      z-index: 1200; max-width: 80%; padding: 8px 14px; border-radius: 6px;
+      background: #b00020; color: #fff; font-size: 14px; display: none;
+      box-shadow: 0 2px 8px rgba(0,0,0,.3);
+    }
+
+    #topbar {
+      position: absolute; top: 12px; right: 12px; z-index: 1000;
+      background: rgba(255,255,255,.95); padding: 8px 10px; border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.25); font-size: 13px; display: none;
+    }
+    #topbar select { font-size: 13px; }
+    #topbar button { font-size: 13px; cursor: pointer; margin-left: 6px; }
+
+    #panel {
+      position: absolute; top: 12px; left: 12px; z-index: 1000;
+      background: rgba(255,255,255,.95); padding: 12px; border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.25); width: 260px; display: none;
+    }
+    #panel h1 { font-size: 15px; margin: 0 0 8px; }
+    #coord { width: 100%; box-sizing: border-box; padding: 6px; font-size: 13px; }
+    .row { display: flex; gap: 8px; margin-top: 8px; }
+    .row button { flex: 1; padding: 8px; font-size: 13px; cursor: pointer; border-radius: 6px; border: 1px solid #ccc; }
+    #go { background: #1a7f37; color: #fff; border-color: #1a7f37; }
+    .legend { font-size: 12px; color: #444; margin-top: 10px; line-height: 1.6; }
+    .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+
+    .pin { width: 16px; height: 16px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+    .pin.candidate { background: #1e6fe0; }
+    .pin.active { background: #1a7f37; }
+
+    #statusbar {
+      position: absolute; bottom: 0; left: 0; right: 0; z-index: 1000;
+      display: flex; gap: 18px; align-items: center;
+      background: rgba(30,30,30,.9); color: #eee; font-size: 12px;
+      padding: 6px 14px; font-family: ui-monospace, monospace;
+    }
+    #statusbar .conn { color: #4ade80; }
+    #statusbar .conn.down { color: #f87171; }
+
+    /* full-screen overlays: startup gate + doctor dialog */
+    .overlay {
+      position: absolute; inset: 0; z-index: 1500; display: none;
+      background: #1c1f26; color: #e7e7e7; padding: 40px;
+      overflow: auto; box-sizing: border-box;
+    }
+    .overlay h2 { margin-top: 0; }
+    .check { padding: 8px 0; border-bottom: 1px solid #333; }
+    .check .name { font-weight: 600; }
+    .check.ok .name::before { content: "✓ "; color: #4ade80; }
+    .check.bad .name::before { content: "✗ "; color: #f87171; }
+    .check .fix { color: #f0b429; font-size: 13px; margin-top: 2px; }
+    .overlay button { margin-top: 18px; padding: 10px 18px; font-size: 14px; cursor: pointer; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="banner"></div>
+
+  <div id="topbar">
+    <label>Device
+      <select id="device-select"></select>
+    </label>
+    <button id="doctor-btn" title="Run environment self-check">🩺</button>
+  </div>
+
+  <div id="panel">
+    <h1>Sky Walker</h1>
+    <input id="coord" type="text" placeholder="lat, lng — click map or type" />
+    <div class="row">
+      <button id="go">Teleport here</button>
+      <button id="clr">Clear</button>
+    </div>
+    <div class="legend">
+      <div><span class="dot" style="background:#1e6fe0"></span>Candidate (where to go)</div>
+      <div><span class="dot" style="background:#1a7f37"></span>Active (device is here)</div>
+    </div>
+  </div>
+
+  <div id="statusbar">
+    <span id="st-device">device: —</span>
+    <span id="st-conn" class="conn down">● disconnected</span>
+    <span id="st-override">override: —</span>
+  </div>
+
+  <div id="gate" class="overlay">
+    <h2>Sky Walker — preflight</h2>
+    <div id="gate-checks"></div>
+    <button id="gate-retry">Retry</button>
+  </div>
+
+  <div id="doctor" class="overlay" style="background:#20242c">
+    <h2>Doctor</h2>
+    <div id="doctor-checks"></div>
+    <button id="doctor-close">Close</button>
+  </div>
+
+  <div id="reconnect" class="overlay" style="background:#20242c">
+    <h2>Device reconnected</h2>
+    <p id="reconnect-msg"></p>
+    <button id="reconnect-yes">Reapply override</button>
+    <button id="reconnect-no" style="background:#fff">Not now</button>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const api = () => window.pywebview.api;
+    let map, candidateMarker, activeMarker, candidate = null, mapReady = false;
+
+    const candidateIcon = () => L.divIcon({ className: '', html: '<div class="pin candidate"></div>', iconSize: [16, 16], iconAnchor: [8, 16] });
+    const activeIcon = () => L.divIcon({ className: '', html: '<div class="pin active"></div>', iconSize: [16, 16], iconAnchor: [8, 16] });
+
+    const $ = (id) => document.getElementById(id);
+    function showError(t) { $('banner').textContent = t; $('banner').style.display = 'block'; }
+    function clearError() { $('banner').style.display = 'none'; }
+    function errText(res) { return res.hint ? `${res.error} — ${res.hint}` : res.error; }
+
+    function renderChecks(el, checks) {
+      el.innerHTML = '';
+      for (const c of checks) {
+        const div = document.createElement('div');
+        div.className = 'check ' + (c.ok ? 'ok' : 'bad');
+        div.innerHTML = `<div class="name">${c.name}: ${c.detail}</div>` +
+          (!c.ok && c.fix ? `<div class="fix">fix: ${c.fix}</div>` : '');
+        el.appendChild(div);
+      }
+    }
+
+    // --- startup gate (ticket 05) ------------------------------------------
+    async function runGate() {
+      const pf = await api().preflight();
+      if (pf.ok) { $('gate').style.display = 'none'; await chooseDevice(); }
+      else { renderChecks($('gate-checks'), pf.checks); $('gate').style.display = 'block'; }
+    }
+
+    // --- device picker (ticket 07) -----------------------------------------
+    async function chooseDevice() {
+      const devices = await api().list_devices();
+      const sel = $('device-select');
+      sel.innerHTML = '';
+      for (const d of devices) {
+        const o = document.createElement('option');
+        o.value = d.udid; o.textContent = `${d.udid} (iOS ${d.ios})`;
+        sel.appendChild(o);
+      }
+      // Only surface the dropdown when there's a real choice to make.
+      $('topbar').style.display = 'block';
+      sel.style.display = devices.length > 1 ? '' : 'none';
+      await beginWith(devices.length ? devices[0].udid : null);
+    }
+
+    async function beginWith(udid) {
+      const res = await api().begin(udid);
+      if (!res.ok) { showError(errText(res)); return; }
+      clearError();
+      if (!mapReady) await startMap(); else await primeDefault();
+      await refreshStatus();
+    }
+
+    // --- map + teleport (tickets 02-04) ------------------------------------
+    function setCandidate(lat, lng, recenter) {
+      candidate = { lat, lng };
+      if (!candidateMarker) candidateMarker = L.marker([lat, lng], { icon: candidateIcon() }).addTo(map);
+      else candidateMarker.setLatLng([lat, lng]);
+      $('coord').value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+      if (recenter) map.panTo([lat, lng]);
+    }
+    function setActive(lat, lng) {
+      if (!activeMarker) activeMarker = L.marker([lat, lng], { icon: activeIcon(), zIndexOffset: 1000 }).addTo(map);
+      else activeMarker.setLatLng([lat, lng]);
+    }
+    function parseCoordField() {
+      const p = $('coord').value.replace(',', ' ').split(/\s+/).filter(Boolean);
+      if (p.length !== 2) return null;
+      const lat = parseFloat(p[0]), lng = parseFloat(p[1]);
+      return (Number.isNaN(lat) || Number.isNaN(lng)) ? null : { lat, lng };
+    }
+
+    async function primeDefault() {
+      const d = await api().default_location();
+      setCandidate(d.lat, d.lng, true);
+      const primed = await api().teleport(d.lat, d.lng);
+      if (primed.ok) setActive(primed.lat, primed.lng);
+      else showError(errText(primed));
+    }
+
+    async function startMap() {
+      const d = await api().default_location();
+      map = L.map('map').setView([d.lat, d.lng], 15);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19, attribution: '&copy; OpenStreetMap contributors',
+      }).addTo(map);
+      map.on('click', (e) => setCandidate(e.latlng.lat, e.latlng.lng, false));
+      $('panel').style.display = 'block';
+      mapReady = true;
+      await primeDefault();
+    }
+
+    async function doTeleport() {
+      if (!candidate) return;
+      const res = await api().teleport(candidate.lat, candidate.lng);
+      if (res.ok) { clearError(); setActive(res.lat, res.lng); } else showError(errText(res));
+      await refreshStatus();
+    }
+    async function doClear() {
+      const res = await api().clear();
+      if (res.ok) { clearError(); if (activeMarker) { map.removeLayer(activeMarker); activeMarker = null; } }
+      else showError(errText(res));
+      await refreshStatus();
+    }
+
+    async function refreshStatus() {
+      const s = await api().status();
+      $('st-device').textContent = 'device: ' + (s.device ? `${s.device} (iOS ${s.ios})` : '—');
+      const conn = $('st-conn');
+      conn.textContent = s.connected ? '● connected' : '● disconnected';
+      conn.className = 'conn' + (s.connected ? '' : ' down');
+      $('st-override').textContent = 'override: ' +
+        (s.override ? `${s.override.lat.toFixed(6)}, ${s.override.lng.toFixed(6)}` : 'none');
+    }
+
+    // --- doctor panel (ticket 06) ------------------------------------------
+    async function openDoctor() {
+      const pf = await api().preflight();
+      renderChecks($('doctor-checks'), pf.checks);
+      $('doctor').style.display = 'block';
+    }
+
+    // --- hot-plug reconnect (ticket 08) ------------------------------------
+    function setEnabled(on) {
+      $('go').disabled = !on;
+      $('clr').disabled = !on;
+    }
+
+    // Called from Python (app.py) when the tracked device disappears.
+    window.skyOnLost = async function () {
+      setEnabled(false);
+      showError('Device disconnected — reconnect the cable to continue.');
+      await refreshStatus();
+    };
+
+    // Called from Python when a device reappears after a loss.
+    window.skyOnFound = async function () {
+      const res = await api().begin();  // reopen the tunnel (does not move GPS)
+      if (!res.ok) { showError(errText(res)); return; }
+      setEnabled(true);
+      clearError();
+      await refreshStatus();
+      const la = await api().last_active();
+      if (!la) return;  // nothing to offer
+      $('reconnect-msg').textContent =
+        `Reapply the last override at ${la.lat.toFixed(6)}, ${la.lng.toFixed(6)}?`;
+      $('reconnect').style.display = 'block';
+    };
+
+    async function reapplyYes() {
+      $('reconnect').style.display = 'none';
+      const res = await api().reapply();
+      if (res.ok) { clearError(); setActive(res.lat, res.lng); } else showError(errText(res));
+      await refreshStatus();
+    }
+
+    function wire() {
+      $('go').addEventListener('click', doTeleport);
+      $('clr').addEventListener('click', doClear);
+      $('coord').addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        const c = parseCoordField();
+        if (c) setCandidate(c.lat, c.lng, true); else showError('Type a coordinate as "lat, lng".');
+      });
+      $('device-select').addEventListener('change', (e) => beginWith(e.target.value));
+      $('doctor-btn').addEventListener('click', openDoctor);
+      $('doctor-close').addEventListener('click', () => { $('doctor').style.display = 'none'; });
+      $('gate-retry').addEventListener('click', runGate);
+      $('reconnect-yes').addEventListener('click', reapplyYes);
+      $('reconnect-no').addEventListener('click', () => { $('reconnect').style.display = 'none'; });
+    }
+
+    async function boot() { wire(); await runGate(); }
+
+    if (window.pywebview && window.pywebview.api) boot();
+    else window.addEventListener('pywebviewready', boot);
+  </script>
+</body>
+</html>

@@ -169,6 +169,29 @@ def find_device(udid: Optional[str] = None) -> Device:
     return _run_mapped(_find(), pmd, stage="find-device")
 
 
+def list_all_devices() -> "list[Device]":
+    """Return every USB device as a Device (udid + iOS version).
+
+    Used by the GUI's device picker (ticket 07). Unlike find_device this never
+    errors on zero or many devices — it just returns what is attached, reading
+    each product_version over plain lockdown (no tunnel needed).
+    """
+    pmd = _pmd_mod()
+
+    async def _list():
+        devices = await pmd.list_devices()
+        usb = [d for d in devices if getattr(d, "connection_type", "USB") == "USB"]
+        out = []
+        for d in usb:
+            lockdown = await pmd.create_using_usbmux(
+                serial=d.serial, autopair=True, connection_type="USB"
+            )
+            out.append(Device(d.serial, lockdown.product_version))
+        return out
+
+    return _run_mapped(_list(), pmd, stage="list-devices")
+
+
 class LocationSession:
     """A held override: one userspace tunnel + the DVT location-simulation channel.
 
