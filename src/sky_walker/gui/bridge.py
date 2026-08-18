@@ -39,6 +39,7 @@ class Bridge:
         override_factory: Optional[Callable[[Device], Any]] = None,
         on_device_change: Optional[Callable[[str], None]] = None,
         player_factory: Optional[Callable[..., Any]] = None,
+        walker_factory: Optional[Callable[..., Any]] = None,
         path_store: Optional[Any] = None,
     ) -> None:
         self._default = default_location
@@ -50,6 +51,7 @@ class Bridge:
         self._make_override = override_factory or _default_override
         self._on_device_change = on_device_change or (lambda udid: None)
         self._make_player = player_factory or _default_player
+        self._make_walker = walker_factory or _default_walker
         self._paths = path_store or PathStore(default_paths_file())
 
         self._device: Optional[Device] = None
@@ -60,6 +62,9 @@ class Bridge:
         self._player = None                          # RoutePlayer while a route runs
         self._route_pos: Optional[Coordinate] = None # current simulated position
         self._route_progress: Optional[Dict[str, Any]] = None  # trip/total/leg
+
+        self._walker = None                          # Walker while Joystick mode is on
+        self._joystick_pos: Optional[Coordinate] = None  # current joystick position
 
     # --- preflight & device discovery (tickets 05, 06, 07) ------------------
 
@@ -130,6 +135,7 @@ class Bridge:
         self._player = None
         self._route_pos = None
         self._route_progress = None
+        self._stop_walker()
         if self._override is not None:
             self._override.__exit__(None, None, None)
         self._override = None
@@ -167,6 +173,8 @@ class Bridge:
             return _fail("No active session.")
         if self._is_playing():
             return _fail("Stop the route before teleporting.")
+        if self._is_walking():
+            return _fail("Leave the joystick before teleporting.")
 
         try:
             self._override.teleport(coord)
@@ -189,6 +197,7 @@ class Bridge:
             self._player.stop()
             self._route_pos = None
             self._route_progress = None
+        self._stop_walker()
         try:
             self._override.clear()
         except SkyWalkerError as exc:
@@ -209,18 +218,17 @@ class Bridge:
         """
         if self._override is None:
             return _fail("No active session.")
+        if self._is_walking():
+            return _fail("Leave the joystick before starting a route.")
         try:
             points = [parse_coordinate(f"{w['lat']}, {w['lng']}") for w in waypoints]
         except (ValueError, TypeError, KeyError) as exc:
             return _err(exc) if isinstance(exc, ValueError) else _fail("Bad waypoint.")
         if not _MIN_WAYPOINTS <= len(points) <= _MAX_WAYPOINTS:
             return _fail(f"A route takes {_MIN_WAYPOINTS}–{_MAX_WAYPOINTS} waypoints.")
-        try:
-            speed = float(speed_kmh)
-        except (TypeError, ValueError):
-            return _fail("Speed must be a number.")
-        if speed <= 0:
-            return _fail("Speed must be positive.")
+        speed = _positive_speed(speed_kmh)
+        if speed is None:
+            return _fail("Speed must be a positive number.")
         try:
             loops_val = None if loops is None else int(loops)
         except (TypeError, ValueError):
@@ -248,6 +256,85 @@ class Bridge:
         if self._player is not None:
             self._player.stop()
         return {"ok": True}
+
+    # --- Joystick (joystick-mode ticket 03) ---------------------------------
+
+    def start_joystick(
+        self, speed_kmh: Any, cand_lat: Any = None, cand_lng: Any = None
+    ) -> Dict[str, Any]:
+        """Enter Joystick mode: hold at the start point, ready for arrow keys.
+
+        Spins the Walker with a zero Heading (so the device stays put) starting
+        from the current override position; if there is none yet, from the map's
+        candidate point (cand_lat/cand_lng), else the Default Location. Arrow
+        keys then drive it live via set_heading. Refused while a route plays —
+        the two modes are exclusive.
+        """
+        if self._override is None:
+            return _fail("No active session.")
+        if self._is_playing():
+            return _fail("Stop the route before using the joystick.")
+        speed = _positive_speed(speed_kmh)
+        if speed is None:
+            return _fail("Speed must be a positive number.")
+        origin = self._active
+        if origin is None and cand_lat is not None and cand_lng is not None:
+            try:
+                origin = parse_coordinate(f"{cand_lat}, {cand_lng}")
+            except ValueError:
+                origin = None
+        if origin is None:
+            origin = self._default
+        self._stop_walker()
+        self._walker = self._make_walker(
+            sink=self._drive_joystick_point,
+            origin=origin,
+            speed_kmh=speed,
+            hz=_JOYSTICK_HZ,
+        )
+        self._joystick_pos = origin
+        self._walker.start()
+        return {"ok": True, **_coord_dict(origin)}
+
+    def set_heading(self, north: Any, east: Any) -> Dict[str, Any]:
+        """Set the live Heading (north/east vector); zero holds position."""
+        if self._walker is None:
+            return _fail("Joystick is not active.")
+        try:
+            n, e = float(north), float(east)
+        except (TypeError, ValueError):
+            return _fail("Heading must be numbers.")
+        self._walker.set_heading(n, e)
+        return {"ok": True}
+
+    def set_joystick_speed(self, speed_kmh: Any) -> Dict[str, Any]:
+        """Change the live Movement Speed while walking (takes effect next tick)."""
+        if self._walker is None:
+            return _fail("Joystick is not active.")
+        speed = _positive_speed(speed_kmh)
+        if speed is None:
+            return _fail("Speed must be a positive number.")
+        self._walker.set_speed(speed)
+        return {"ok": True}
+
+    def stop_joystick(self) -> Dict[str, Any]:
+        """Leave Joystick mode; the device holds its current position."""
+        self._stop_walker()
+        return {"ok": True}
+
+    def _stop_walker(self) -> None:
+        if self._walker is not None:
+            self._walker.stop()
+        self._walker = None
+        self._joystick_pos = None
+
+    def _drive_joystick_point(self, coord: "Coordinate") -> None:
+        """Walker sink, called each tick: move the device and track position."""
+        self._apply(coord)
+        self._joystick_pos = coord
+
+    def _is_walking(self) -> bool:
+        return self._walker is not None and self._walker.running
 
     # --- Saved Paths (ticket 04) --------------------------------------------
 
@@ -281,11 +368,15 @@ class Bridge:
         self._paths.delete(name)
         return {"ok": True, "paths": self._paths.names()}
 
+    def _apply(self, coord: "Coordinate") -> None:
+        """Move the device to `coord` and record it as the active/last override."""
+        self._override.teleport(coord)
+        self._active = coord
+        self._last = coord
+
     def _drive_point(self, step: "Step") -> None:
         """Sink the driver calls each tick: move the device, track position."""
-        self._override.teleport(step.coord)
-        self._active = step.coord
-        self._last = step.coord
+        self._apply(step.coord)
         self._route_pos = step.coord
 
     def _on_route_progress(self, index: int, step: "Step") -> None:
@@ -303,6 +394,7 @@ class Bridge:
         """Current state for the status bar: device, iOS, override, route."""
         connected = self._override is not None
         playing = self._is_playing()
+        walking = self._is_walking()
         return {
             "device": self._device.udid if self._device else None,
             "ios": self._device.ios_version if self._device else None,
@@ -319,6 +411,12 @@ class Bridge:
                 else None
             ),
             "progress": self._route_progress if playing else None,
+            "walking": walking,
+            "joystick_position": (
+                _coord_dict(self._joystick_pos)
+                if (walking and self._joystick_pos is not None)
+                else None
+            ),
         }
 
 
@@ -335,6 +433,15 @@ def _err(exc: Exception) -> Dict[str, Any]:
 
 def _fail(message: str) -> Dict[str, Any]:
     return {"ok": False, "error": message, "hint": ""}
+
+
+def _positive_speed(value: Any) -> Optional[float]:
+    """Coerce a Movement Speed to a positive float, or None if invalid."""
+    try:
+        speed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return speed if speed > 0 else None
 
 
 # --- default (real) collaborators -------------------------------------------
@@ -358,6 +465,7 @@ def _default_override(device: Device):
 
 
 _ROUTE_HZ = 1.0  # Route Playback update rate (see spec: fixed 1 Hz)
+_JOYSTICK_HZ = 5.0  # Joystick update rate (see joystick-mode spec: ~5 Hz)
 
 
 def _default_player(sink, on_progress, on_finish):
@@ -366,3 +474,9 @@ def _default_player(sink, on_progress, on_finish):
     return RoutePlayer(
         sink, hz=_ROUTE_HZ, on_progress=on_progress, on_finish=on_finish
     )
+
+
+def _default_walker(sink, origin, speed_kmh, hz):
+    from sky_walker.gui.route import Walker
+
+    return Walker(sink, origin, hz=hz, speed_kmh=speed_kmh)

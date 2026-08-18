@@ -93,6 +93,7 @@
     <div class="modes">
       <button id="mode-teleport" class="on">Teleport</button>
       <button id="mode-route">Route</button>
+      <button id="mode-joystick">Joystick</button>
     </div>
 
     <div id="teleport-controls">
@@ -133,6 +134,17 @@
       </div>
     </div>
 
+    <div id="joystick-controls" class="hidden">
+      <div class="legend" style="margin-top:0;">
+        按住方向鍵走路：↑北 · ↓南 · ←西 · →東（可同時按兩鍵走斜線）。
+      </div>
+      <label>Speed (km/h)<input id="joystick-speed" type="number" min="1" step="1" value="50" /></label>
+      <div class="legend">
+        <div><span class="dot" style="background:#1a7f37"></span>Holding (device is here)</div>
+        <div><span class="dot" style="background:#f59e0b"></span>Walking (device is moving)</div>
+      </div>
+    </div>
+
     <div class="row"><button id="clr">Clear</button></div>
   </div>
 
@@ -168,6 +180,11 @@
     let map, candidateMarker, activeMarker, candidate = null, mapReady = false;
     let mode = 'teleport';
     let waypoints = [], wpMarkers = [], movingMarker = null, routePoll = null;
+    let joyPoll = null;
+    const heldKeys = new Set();
+    const KEY_VEC = {  // arrow key -> [north, east] unit contribution (↑=north, →=east)
+      ArrowUp: [1, 0], ArrowDown: [-1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1],
+    };
 
     const candidateIcon = () => L.divIcon({ className: '', html: '<div class="pin candidate"></div>', iconSize: [16, 16], iconAnchor: [8, 16] });
     const activeIcon = () => L.divIcon({ className: '', html: '<div class="pin active"></div>', iconSize: [16, 16], iconAnchor: [8, 16] });
@@ -263,7 +280,8 @@
       }).addTo(map);
       map.on('click', (e) => {
         if (mode === 'route') addWaypoint(e.latlng.lat, e.latlng.lng);
-        else setCandidate(e.latlng.lat, e.latlng.lng, false);
+        else if (mode === 'teleport') setCandidate(e.latlng.lat, e.latlng.lng, false);
+        // joystick: ignore map clicks — movement is via the arrow keys
       });
       $('panel').style.display = 'block';
       mapReady = true;
@@ -278,9 +296,10 @@
       await refreshStatus();
     }
     async function doClear() {
-      const res = await api().clear();  // also stops any running route (server-side)
+      const res = await api().clear();  // also stops any running route/joystick (server-side)
       if (res.ok) {
         clearError();
+        if (mode === 'joystick') await setMode('teleport');  // return to a clean mode
         if (activeMarker) { map.removeLayer(activeMarker); activeMarker = null; }
         if (movingMarker) { map.removeLayer(movingMarker); movingMarker = null; }
         finishRoute();
@@ -300,6 +319,8 @@
         const p = s.progress;
         const total = p.total === null ? '∞' : p.total;
         $('st-route').textContent = `route: Round Trip ${p.trip}/${total}` + (p.leg ? `, leg ${p.leg}` : '');
+      } else if (s.walking) {
+        $('st-route').textContent = 'joystick: on';
       } else {
         $('st-route').textContent = '';
       }
@@ -313,13 +334,73 @@
     }
 
     // --- Route Playback (ticket 02) ----------------------------------------
-    function setMode(m) {
+    async function setMode(m) {
       if (routePoll) return;  // don't switch modes while a route is playing
+      if (mode === 'joystick' && m !== 'joystick') await leaveJoystick();
       mode = m;
       $('mode-teleport').classList.toggle('on', m === 'teleport');
       $('mode-route').classList.toggle('on', m === 'route');
+      $('mode-joystick').classList.toggle('on', m === 'joystick');
       $('teleport-controls').classList.toggle('hidden', m !== 'teleport');
       $('route-controls').classList.toggle('hidden', m !== 'route');
+      $('joystick-controls').classList.toggle('hidden', m !== 'joystick');
+      if (m === 'joystick') await enterJoystick();
+    }
+
+    // --- Joystick mode (joystick-mode ticket 03) ---------------------------
+    // Show the device pin orange while any arrow key is held, green when idle.
+    function joystickMoving(isMoving) {
+      if (activeMarker) activeMarker.setIcon(isMoving ? movingIcon() : activeIcon());
+    }
+
+    function currentHeading() {
+      let north = 0, east = 0;
+      for (const k of heldKeys) { north += KEY_VEC[k][0]; east += KEY_VEC[k][1]; }
+      return [north, east];
+    }
+
+    async function pushHeading() {
+      const [n, e] = currentHeading();
+      await api().set_heading(n, e);
+      joystickMoving(n !== 0 || e !== 0);
+    }
+
+    async function enterJoystick() {
+      const speed = parseFloat($('joystick-speed').value);
+      if (!(speed > 0)) { showError('Speed must be a positive number.'); return; }
+      // Pass the map candidate so the walk can start there when nothing is active yet.
+      const cLat = candidate ? candidate.lat : null;
+      const cLng = candidate ? candidate.lng : null;
+      const res = await api().start_joystick(speed, cLat, cLng);
+      if (!res.ok) { showError(errText(res)); return; }
+      clearError();
+      heldKeys.clear();
+      setActive(res.lat, res.lng);   // green pin at the starting point
+      joystickMoving(false);
+      map.panTo([res.lat, res.lng]);
+      map.keyboard.disable();        // arrow keys drive the device, not the map
+      if (joyPoll) clearInterval(joyPoll);
+      joyPoll = setInterval(pollJoystick, 200);
+    }
+
+    async function leaveJoystick() {
+      if (joyPoll) { clearInterval(joyPoll); joyPoll = null; }
+      heldKeys.clear();
+      map.keyboard.enable();
+      joystickMoving(false);         // back to green idle pin
+      await api().stop_joystick();
+      await refreshStatus();
+    }
+
+    async function pollJoystick() {
+      const s = await api().status();
+      if (s.joystick_position) {
+        const ll = [s.joystick_position.lat, s.joystick_position.lng];
+        setActive(ll[0], ll[1]);
+        // Follow only while walking (a key is held); don't fight manual panning when idle.
+        if (heldKeys.size > 0) map.panTo(ll);
+      }
+      await refreshStatus();
     }
 
     function renderWaypoints() {
@@ -353,6 +434,7 @@
       $('route-stop').disabled = idle;
       $('mode-teleport').disabled = !idle;
       $('mode-route').disabled = !idle;
+      $('mode-joystick').disabled = !idle;
       $('go').disabled = !idle;
     }
 
@@ -435,14 +517,17 @@
     function disableRouteControls(disabled) {
       ['route-start', 'route-stop', 'route-reset', 'route-speed', 'route-loops',
        'route-infinite', 'path-save', 'path-load', 'path-delete',
-       'mode-teleport', 'mode-route'].forEach((id) => { $(id).disabled = disabled; });
+       'mode-teleport', 'mode-route', 'mode-joystick'].forEach((id) => { $(id).disabled = disabled; });
     }
 
     // Called from Python (app.py) when the tracked device disappears.
     window.skyOnLost = async function () {
-      // The route (if any) is already torn down server-side; mirror it here:
-      // stop polling, drop the moving pin, and lock every control.
+      // The route/joystick (if any) is already torn down server-side; mirror it
+      // here: stop polling, drop the moving pin, and lock every control.
       if (routePoll) { clearInterval(routePoll); routePoll = null; }
+      if (joyPoll) { clearInterval(joyPoll); joyPoll = null; }
+      heldKeys.clear();
+      if (map && map.keyboard) map.keyboard.enable();
       if (movingMarker) { map.removeLayer(movingMarker); movingMarker = null; }
       setEnabled(false);
       disableRouteControls(true);
@@ -493,6 +578,25 @@
       $('reconnect-no').addEventListener('click', () => { $('reconnect').style.display = 'none'; });
       $('mode-teleport').addEventListener('click', () => setMode('teleport'));
       $('mode-route').addEventListener('click', () => setMode('route'));
+      $('mode-joystick').addEventListener('click', () => setMode('joystick'));
+      $('joystick-speed').addEventListener('input', () => {
+        if (mode !== 'joystick') return;
+        const speed = parseFloat($('joystick-speed').value);
+        if (speed > 0) api().set_joystick_speed(speed);
+      });
+      document.addEventListener('keydown', (e) => {
+        if (mode !== 'joystick' || !(e.key in KEY_VEC)) return;
+        e.preventDefault();
+        if (heldKeys.has(e.key)) return;  // ignore OS auto-repeat
+        heldKeys.add(e.key);
+        pushHeading();
+      });
+      document.addEventListener('keyup', (e) => {
+        if (mode !== 'joystick' || !(e.key in KEY_VEC)) return;
+        e.preventDefault();
+        heldKeys.delete(e.key);
+        pushHeading();
+      });
       $('route-start').addEventListener('click', startRoute);
       $('route-stop').addEventListener('click', stopRoute);
       $('route-reset').addEventListener('click', resetWaypoints);

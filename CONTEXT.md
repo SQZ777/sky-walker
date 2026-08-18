@@ -34,6 +34,18 @@ _Avoid_: velocity, pace, rate
 A named, persisted ordered set of Waypoints the user can reload for Route Playback.
 _Avoid_: route, preset, favorite
 
+**Joystick Mode**:
+Driving the override live with the keyboard arrow keys: hold a key and the device walks in that compass direction (↑ north, ↓ south, ← west, → east) at the Movement Speed, releasing stops it. A third mode beside Teleport and Route Playback, and mutually exclusive with them.
+_Avoid_: manual mode, drive mode, WASD
+
+**Heading**:
+The current Joystick direction, expressed as a (north, east) vector. A zero Heading holds position. Two keys combine into a diagonal Heading that still covers Movement Speed (not √2× it).
+_Avoid_: bearing, course, angle
+
+**Walker**:
+The background driver of Joystick Mode: it advances the device each tick from the current Heading and Movement Speed. Analogous to Route Playback's player, but its direction is mutable mid-run rather than a fixed Waypoint stream.
+_Avoid_: joystick driver, mover, walker thread
+
 **Session**:
 The live connection during which a Location Override is in effect. When the Session ends (cleared, process exits, or device reboots) the device returns to its real GPS.
 

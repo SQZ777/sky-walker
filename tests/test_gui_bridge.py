@@ -58,8 +58,35 @@ class FakePlayer:
         self.running = False
 
 
-# players created by the bridge under test are captured here
+class FakeWalker:
+    def __init__(self, sink, origin, speed_kmh, hz):
+        self.sink = sink
+        self.origin = origin
+        self.speed_kmh = speed_kmh
+        self.hz = hz
+        self.heading = None
+        self.started = False
+        self.stopped = 0
+        self.running = False
+
+    def set_heading(self, north, east):
+        self.heading = (north, east)
+
+    def set_speed(self, speed_kmh):
+        self.speed_kmh = speed_kmh
+
+    def start(self):
+        self.started = True
+        self.running = True
+
+    def stop(self):
+        self.stopped += 1
+        self.running = False
+
+
+# players and walkers created by the bridge under test are captured here
 _players = []
+_walkers = []
 
 
 class FakeStore:
@@ -84,6 +111,7 @@ def make_bridge(*, device=None, override=None, preflight=None, devices=None,
     device = device or Device("ABC123", "17.4")
     override = override if override is not None else FakeOverride()
     _players.clear()
+    _walkers.clear()
 
     def selector(udid):
         if select_error is not None:
@@ -95,6 +123,11 @@ def make_bridge(*, device=None, override=None, preflight=None, devices=None,
         _players.append(p)
         return p
 
+    def walker_factory(sink, origin, speed_kmh, hz):
+        w = FakeWalker(sink, origin, speed_kmh, hz)
+        _walkers.append(w)
+        return w
+
     return Bridge(
         DEFAULT_LOCATION,
         preflight=preflight or (lambda u: DoctorReport([Check("x", True, "ok")])),
@@ -102,6 +135,7 @@ def make_bridge(*, device=None, override=None, preflight=None, devices=None,
         device_selector=selector,
         override_factory=lambda d: override,
         player_factory=player_factory,
+        walker_factory=walker_factory,
         path_store=path_store or FakeStore(),
     ), override, device
 
@@ -415,3 +449,127 @@ def test_delete_path():
     bridge.save_path("home", _wps((1, 2), (3, 4)))
     res = bridge.delete_path("home")
     assert res["ok"] is True and res["paths"] == []
+
+
+# --- Joystick (joystick-mode ticket 03) -------------------------------------
+
+def test_start_joystick_requires_session():
+    bridge, _, _ = make_bridge()  # not begun
+    assert bridge.start_joystick(50)["ok"] is False
+    assert not _walkers
+
+
+def test_start_joystick_rejects_nonpositive_speed():
+    bridge, _, _ = started()
+    assert bridge.start_joystick(0)["ok"] is False
+    assert not _walkers
+
+
+def test_start_joystick_starts_walker_from_current_position():
+    bridge, _, _ = started()
+    bridge.teleport(10.0, 20.0)
+    res = bridge.start_joystick(50)
+    assert res["ok"] is True
+    walker = _walkers[-1]
+    assert walker.started is True
+    assert walker.origin == Coordinate(10.0, 20.0)  # started where the device is
+    assert walker.speed_kmh == 50.0
+    s = bridge.status()
+    assert s["walking"] is True
+    assert s["joystick_position"] == {"lat": 10.0, "lng": 20.0}
+
+
+def test_start_joystick_falls_back_to_default_when_no_active():
+    bridge, _, _ = started()  # begun but never teleported, no candidate given
+    bridge.start_joystick(50)
+    assert _walkers[-1].origin == DEFAULT_LOCATION
+
+
+def test_start_joystick_uses_candidate_when_no_active():
+    bridge, _, _ = started()  # begun, never teleported -> no active override
+    bridge.start_joystick(50, 10.0, 20.0)  # map candidate passed in
+    assert _walkers[-1].origin == Coordinate(10.0, 20.0)
+
+
+def test_start_joystick_prefers_active_over_candidate():
+    bridge, _, _ = started()
+    bridge.teleport(1.0, 2.0)
+    bridge.start_joystick(50, 10.0, 20.0)
+    assert _walkers[-1].origin == Coordinate(1.0, 2.0)  # active wins over candidate
+
+
+def test_start_joystick_refused_while_route_playing():
+    bridge, _, _ = started()
+    bridge.start_route(_wps((0, 0), (0, 1)), 50, 1)
+    res = bridge.start_joystick(50)
+    assert res["ok"] is False
+    assert not _walkers  # never started
+
+
+def test_start_route_refused_while_walking():
+    bridge, _, _ = started()
+    bridge.start_joystick(50)
+    res = bridge.start_route(_wps((0, 0), (0, 1)), 50, 1)
+    assert res["ok"] is False
+    assert not _players  # route never started
+
+
+def test_set_heading_updates_walker():
+    bridge, _, _ = started()
+    bridge.start_joystick(50)
+    assert bridge.set_heading(1.0, 0.0)["ok"] is True
+    assert _walkers[-1].heading == (1.0, 0.0)
+
+
+def test_set_heading_without_joystick_fails():
+    bridge, _, _ = started()
+    assert bridge.set_heading(1.0, 0.0)["ok"] is False
+
+
+def test_set_joystick_speed_updates_walker_live():
+    bridge, _, _ = started()
+    bridge.start_joystick(50)
+    assert bridge.set_joystick_speed(80)["ok"] is True
+    assert _walkers[-1].speed_kmh == 80.0
+
+
+def test_walker_sink_moves_device_and_tracks_position():
+    bridge, override, _ = started()
+    bridge.start_joystick(50)
+    walker = _walkers[-1]
+    walker.sink(Coordinate(7.0, 8.0))  # simulate one Walker tick
+    assert override.teleports[-1] == Coordinate(7.0, 8.0)
+    s = bridge.status()
+    assert s["joystick_position"] == {"lat": 7.0, "lng": 8.0}
+    assert s["override"] == {"lat": 7.0, "lng": 8.0}
+
+
+def test_teleport_refused_while_walking():
+    bridge, override, _ = started()
+    bridge.start_joystick(50)
+    res = bridge.teleport(30.0, 40.0)
+    assert res["ok"] is False
+    assert Coordinate(30.0, 40.0) not in override.teleports
+
+
+def test_stop_joystick_stops_walker():
+    bridge, _, _ = started()
+    bridge.start_joystick(50)
+    assert bridge.stop_joystick()["ok"] is True
+    assert _walkers[-1].stopped >= 1
+    assert bridge.status()["walking"] is False
+
+
+def test_clear_stops_walker():
+    bridge, _, _ = started()
+    bridge.start_joystick(50)
+    bridge.clear()
+    assert _walkers[-1].stopped >= 1
+    assert bridge.status()["walking"] is False
+
+
+def test_shutdown_stops_walker():
+    bridge, _, _ = started()
+    bridge.start_joystick(50)
+    bridge.shutdown()
+    assert _walkers[-1].stopped >= 1
