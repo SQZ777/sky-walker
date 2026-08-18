@@ -1,6 +1,7 @@
 """Command-line surface (see docs/adr/0002 and CONTEXT.md).
 
     sky-walker              -> Interactive Mode (the main use)
+    sky-walker gui          -> desktop map GUI (needs the optional [gui] extra)
     sky-walker doctor       -> environment self-check
     sky-walker clear        -> emergency one-shot revert to real GPS
 
@@ -25,6 +26,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--udid", help="Target device UDID (needed only if several are connected).")
 
     sub = parser.add_subparsers(dest="command")
+    sub.add_parser("gui", help="Open the desktop map GUI (needs the [gui] extra).")
     sub.add_parser("doctor", help="Check that every prerequisite for a session is met.")
     sub.add_parser("clear", help="Release any active override and return to real GPS.")
     # No subcommand => interactive mode (handled in main()).
@@ -35,6 +37,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _build_parser().parse_args(argv)
 
     try:
+        if args.command == "gui":
+            from sky_walker.gui.app import run_gui
+            return run_gui(args.udid)
         if args.command == "doctor":
             from sky_walker import doctor
             return doctor.run(args.udid)

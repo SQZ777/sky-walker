@@ -13,8 +13,16 @@ dependencies = [
     "pymobiledevice3>=10.7",
 ]
 
+[project.optional-dependencies]
+# Desktop GUI front-end (sky-walker gui). Optional so the CLI installs lean.
+gui = ["pywebview>=5.0"]
+
 [project.scripts]
 sky-walker = "sky_walker.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# Ship the GUI's web assets inside the package so `sky-walker gui` can load them.
+"sky_walker.gui" = ["web/*.html"]

@@ -61,3 +61,10 @@ def select_device(udid: Optional[str] = None) -> Device:
     from sky_walker import backend
 
     return backend.find_device(udid)
+
+
+def list_devices() -> "list[Device]":
+    """Return every attached USB device (for the GUI's device picker)."""
+    from sky_walker import backend
+
+    return backend.list_all_devices()

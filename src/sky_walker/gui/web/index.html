@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sky Walker</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
+    #map { position: absolute; inset: 0; }
+
+    #banner {
+      position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+      z-index: 1200; max-width: 80%; padding: 8px 14px; border-radius: 6px;
+      background: #b00020; color: #fff; font-size: 14px; display: none;
+      box-shadow: 0 2px 8px rgba(0,0,0,.3);
+    }
+
+    #topbar {
+      position: absolute; top: 12px; right: 12px; z-index: 1000;
+      background: rgba(255,255,255,.95); padding: 8px 10px; border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.25); font-size: 13px; display: none;
+    }
+    #topbar select { font-size: 13px; }
+    #topbar button { font-size: 13px; cursor: pointer; margin-left: 6px; }
+
+    #panel {
+      position: absolute; top: 12px; left: 12px; z-index: 1000;
+      background: rgba(255,255,255,.95); padding: 12px; border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.25); width: 260px; display: none;
+    }
+    #panel h1 { font-size: 15px; margin: 0 0 8px; }
+    #coord { width: 100%; box-sizing: border-box; padding: 6px; font-size: 13px; }
+    .row { display: flex; gap: 8px; margin-top: 8px; }
+    .row button { flex: 1; padding: 8px; font-size: 13px; cursor: pointer; border-radius: 6px; border: 1px solid #ccc; }
+    #go { background: #1a7f37; color: #fff; border-color: #1a7f37; }
+    .legend { font-size: 12px; color: #444; margin-top: 10px; line-height: 1.6; }
+    .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+
+    .pin { width: 16px; height: 16px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+    .pin.candidate { background: #1e6fe0; }
+    .pin.active { background: #1a7f37; }
+    .pin.moving { background: #f59e0b; }
+    .wp-badge { width: 20px; height: 20px; border-radius: 50%; background: #7c3aed; color: #fff;
+      border: 2px solid #fff; display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+
+    .modes { display: flex; gap: 6px; margin-bottom: 8px; }
+    .modes button { flex: 1; padding: 6px; font-size: 13px; cursor: pointer; border: 1px solid #ccc; border-radius: 6px; background: #fff; }
+    .modes button.on { background: #111; color: #fff; border-color: #111; }
+    .hidden { display: none; }
+    #route-controls label { display: block; font-size: 12px; margin-top: 8px; }
+    #route-controls input { width: 100%; box-sizing: border-box; padding: 6px; font-size: 13px; }
+    #wp-list { font-size: 12px; color: #444; margin: 4px 0; }
+
+    #statusbar {
+      position: absolute; bottom: 0; left: 0; right: 0; z-index: 1000;
+      display: flex; gap: 18px; align-items: center;
+      background: rgba(30,30,30,.9); color: #eee; font-size: 12px;
+      padding: 6px 14px; font-family: ui-monospace, monospace;
+    }
+    #statusbar .conn { color: #4ade80; }
+    #statusbar .conn.down { color: #f87171; }
+
+    /* full-screen overlays: startup gate + doctor dialog */
+    .overlay {
+      position: absolute; inset: 0; z-index: 1500; display: none;
+      background: #1c1f26; color: #e7e7e7; padding: 40px;
+      overflow: auto; box-sizing: border-box;
+    }
+    .overlay h2 { margin-top: 0; }
+    .check { padding: 8px 0; border-bottom: 1px solid #333; }
+    .check .name { font-weight: 600; }
+    .check.ok .name::before { content: "✓ "; color: #4ade80; }
+    .check.bad .name::before { content: "✗ "; color: #f87171; }
+    .check .fix { color: #f0b429; font-size: 13px; margin-top: 2px; }
+    .overlay button { margin-top: 18px; padding: 10px 18px; font-size: 14px; cursor: pointer; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="banner"></div>
+
+  <div id="topbar">
+    <label>Device
+      <select id="device-select"></select>
+    </label>
+    <button id="doctor-btn" title="Run environment self-check">🩺</button>
+  </div>
+
+  <div id="panel">
+    <h1>Sky Walker</h1>
+    <div class="modes">
+      <button id="mode-teleport" class="on">Teleport</button>
+      <button id="mode-route">Route</button>
+      <button id="mode-joystick">Joystick</button>
+    </div>
+
+    <div id="teleport-controls">
+      <input id="coord" type="text" placeholder="lat, lng — click map or type" />
+      <div class="row">
+        <button id="go">Teleport here</button>
+      </div>
+      <div class="legend">
+        <div><span class="dot" style="background:#1e6fe0"></span>Candidate (where to go)</div>
+        <div><span class="dot" style="background:#1a7f37"></span>Active (device is here)</div>
+      </div>
+    </div>
+
+    <div id="route-controls" class="hidden">
+      <div id="wp-list">Waypoints: none — click the map (up to 3)</div>
+      <label>Speed (km/h)<input id="route-speed" type="number" min="1" step="1" value="50" /></label>
+      <label>Round trips<input id="route-loops" type="number" min="1" step="1" value="1" /></label>
+      <label style="display:flex;align-items:center;gap:6px;">
+        <input id="route-infinite" type="checkbox" style="width:auto;" /> Infinite (until Stop)
+      </label>
+      <div class="row">
+        <button id="route-start" style="background:#1a7f37;color:#fff;border-color:#1a7f37">Start</button>
+        <button id="route-stop">Stop</button>
+        <button id="route-reset">Reset</button>
+      </div>
+      <div class="legend">
+        <div><span class="dot" style="background:#7c3aed"></span>Waypoint (order = 1,2,3)</div>
+        <div><span class="dot" style="background:#f59e0b"></span>Moving (device is here)</div>
+      </div>
+
+      <hr style="margin:10px 0;border:none;border-top:1px solid #ddd;" />
+      <label>Save current waypoints as<input id="path-name" type="text" placeholder="path name" /></label>
+      <div class="row"><button id="path-save">Save path</button></div>
+      <label>Saved paths<select id="path-select" style="width:100%;padding:6px;font-size:13px;"></select></label>
+      <div class="row">
+        <button id="path-load">Load</button>
+        <button id="path-delete">Delete</button>
+      </div>
+    </div>
+
+    <div id="joystick-controls" class="hidden">
+      <div class="legend" style="margin-top:0;">
+        按住方向鍵走路：↑北 · ↓南 · ←西 · →東（可同時按兩鍵走斜線）。
+      </div>
+      <label>Speed (km/h)<input id="joystick-speed" type="number" min="1" step="1" value="50" /></label>
+      <div class="legend">
+        <div><span class="dot" style="background:#1a7f37"></span>Holding (device is here)</div>
+        <div><span class="dot" style="background:#f59e0b"></span>Walking (device is moving)</div>
+      </div>
+    </div>
+
+    <div class="row"><button id="clr">Clear</button></div>
+  </div>
+
+  <div id="statusbar">
+    <span id="st-device">device: —</span>
+    <span id="st-conn" class="conn down">● disconnected</span>
+    <span id="st-override">override: —</span>
+    <span id="st-route"></span>
+  </div>
+
+  <div id="gate" class="overlay">
+    <h2>Sky Walker — preflight</h2>
+    <div id="gate-checks"></div>
+    <button id="gate-retry">Retry</button>
+  </div>
+
+  <div id="doctor" class="overlay" style="background:#20242c">
+    <h2>Doctor</h2>
+    <div id="doctor-checks"></div>
+    <button id="doctor-close">Close</button>
+  </div>
+
+  <div id="reconnect" class="overlay" style="background:#20242c">
+    <h2>Device reconnected</h2>
+    <p id="reconnect-msg"></p>
+    <button id="reconnect-yes">Reapply override</button>
+    <button id="reconnect-no" style="background:#fff">Not now</button>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const api = () => window.pywebview.api;
+    let map, candidateMarker, activeMarker, candidate = null, mapReady = false;
+    let mode = 'teleport';
+    let waypoints = [], wpMarkers = [], movingMarker = null, routePoll = null;
+    let joyPoll = null;
+    const heldKeys = new Set();
+    const KEY_VEC = {  // arrow key -> [north, east] unit contribution (↑=north, →=east)
+      ArrowUp: [1, 0], ArrowDown: [-1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1],
+    };
+
+    const candidateIcon = () => L.divIcon({ className: '', html: '<div class="pin candidate"></div>', iconSize: [16, 16], iconAnchor: [8, 16] });
+    const activeIcon = () => L.divIcon({ className: '', html: '<div class="pin active"></div>', iconSize: [16, 16], iconAnchor: [8, 16] });
+    const movingIcon = () => L.divIcon({ className: '', html: '<div class="pin moving"></div>', iconSize: [16, 16], iconAnchor: [8, 16] });
+    const wpIcon = (n) => L.divIcon({ className: '', html: `<div class="wp-badge">${n}</div>`, iconSize: [20, 20], iconAnchor: [10, 10] });
+
+    const $ = (id) => document.getElementById(id);
+    function showError(t) { $('banner').textContent = t; $('banner').style.display = 'block'; }
+    function clearError() { $('banner').style.display = 'none'; }
+    function errText(res) { return res.hint ? `${res.error} — ${res.hint}` : res.error; }
+
+    function renderChecks(el, checks) {
+      el.innerHTML = '';
+      for (const c of checks) {
+        const div = document.createElement('div');
+        div.className = 'check ' + (c.ok ? 'ok' : 'bad');
+        div.innerHTML = `<div class="name">${c.name}: ${c.detail}</div>` +
+          (!c.ok && c.fix ? `<div class="fix">fix: ${c.fix}</div>` : '');
+        el.appendChild(div);
+      }
+    }
+
+    // --- startup gate (ticket 05) ------------------------------------------
+    async function runGate() {
+      const pf = await api().preflight();
+      if (pf.ok) { $('gate').style.display = 'none'; await chooseDevice(); }
+      else { renderChecks($('gate-checks'), pf.checks); $('gate').style.display = 'block'; }
+    }
+
+    // --- device picker (ticket 07) -----------------------------------------
+    async function chooseDevice() {
+      const devices = await api().list_devices();
+      const sel = $('device-select');
+      sel.innerHTML = '';
+      for (const d of devices) {
+        const o = document.createElement('option');
+        o.value = d.udid; o.textContent = `${d.udid} (iOS ${d.ios})`;
+        sel.appendChild(o);
+      }
+      // Only surface the dropdown when there's a real choice to make.
+      $('topbar').style.display = 'block';
+      sel.style.display = devices.length > 1 ? '' : 'none';
+      await beginWith(devices.length ? devices[0].udid : null);
+    }
+
+    async function beginWith(udid) {
+      const res = await api().begin(udid);
+      if (!res.ok) { showError(errText(res)); return; }
+      clearError();
+      if (!mapReady) {
+        await startMap();  // first launch: prime the Default Location (matches CLI)
+      } else if (activeMarker) {
+        // Device switch: the tunnel is reopened but we do NOT move the new
+        // device's GPS — teleporting stays an explicit action (ADR-0002).
+        map.removeLayer(activeMarker);
+        activeMarker = null;
+      }
+      await refreshStatus();
+    }
+
+    // --- map + teleport (tickets 02-04) ------------------------------------
+    function setCandidate(lat, lng, recenter) {
+      candidate = { lat, lng };
+      if (!candidateMarker) candidateMarker = L.marker([lat, lng], { icon: candidateIcon() }).addTo(map);
+      else candidateMarker.setLatLng([lat, lng]);
+      $('coord').value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+      if (recenter) map.panTo([lat, lng]);
+    }
+    function setActive(lat, lng) {
+      if (!activeMarker) activeMarker = L.marker([lat, lng], { icon: activeIcon(), zIndexOffset: 1000 }).addTo(map);
+      else activeMarker.setLatLng([lat, lng]);
+    }
+    function parseCoordField() {
+      const p = $('coord').value.replace(',', ' ').split(/\s+/).filter(Boolean);
+      if (p.length !== 2) return null;
+      const lat = parseFloat(p[0]), lng = parseFloat(p[1]);
+      return (Number.isNaN(lat) || Number.isNaN(lng)) ? null : { lat, lng };
+    }
+
+    async function primeDefault() {
+      const d = await api().default_location();
+      setCandidate(d.lat, d.lng, true);
+      const primed = await api().teleport(d.lat, d.lng);
+      if (primed.ok) setActive(primed.lat, primed.lng);
+      else showError(errText(primed));
+    }
+
+    async function startMap() {
+      const d = await api().default_location();
+      map = L.map('map').setView([d.lat, d.lng], 15);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19, attribution: '&copy; OpenStreetMap contributors',
+      }).addTo(map);
+      map.on('click', (e) => {
+        if (mode === 'route') addWaypoint(e.latlng.lat, e.latlng.lng);
+        else if (mode === 'teleport') setCandidate(e.latlng.lat, e.latlng.lng, false);
+        // joystick: ignore map clicks — movement is via the arrow keys
+      });
+      $('panel').style.display = 'block';
+      mapReady = true;
+      await primeDefault();
+      await refreshPaths();
+    }
+
+    async function doTeleport() {
+      if (!candidate) return;
+      const res = await api().teleport(candidate.lat, candidate.lng);
+      if (res.ok) { clearError(); setActive(res.lat, res.lng); } else showError(errText(res));
+      await refreshStatus();
+    }
+    async function doClear() {
+      const res = await api().clear();  // also stops any running route/joystick (server-side)
+      if (res.ok) {
+        clearError();
+        if (mode === 'joystick') await setMode('teleport');  // return to a clean mode
+        if (activeMarker) { map.removeLayer(activeMarker); activeMarker = null; }
+        if (movingMarker) { map.removeLayer(movingMarker); movingMarker = null; }
+        finishRoute();
+      } else showError(errText(res));
+      await refreshStatus();
+    }
+
+    async function refreshStatus() {
+      const s = await api().status();
+      $('st-device').textContent = 'device: ' + (s.device ? `${s.device} (iOS ${s.ios})` : '—');
+      const conn = $('st-conn');
+      conn.textContent = s.connected ? '● connected' : '● disconnected';
+      conn.className = 'conn' + (s.connected ? '' : ' down');
+      $('st-override').textContent = 'override: ' +
+        (s.override ? `${s.override.lat.toFixed(6)}, ${s.override.lng.toFixed(6)}` : 'none');
+      if (s.playing && s.progress) {
+        const p = s.progress;
+        const total = p.total === null ? '∞' : p.total;
+        $('st-route').textContent = `route: Round Trip ${p.trip}/${total}` + (p.leg ? `, leg ${p.leg}` : '');
+      } else if (s.walking) {
+        $('st-route').textContent = 'joystick: on';
+      } else {
+        $('st-route').textContent = '';
+      }
+    }
+
+    // --- doctor panel (ticket 06) ------------------------------------------
+    async function openDoctor() {
+      const pf = await api().preflight();
+      renderChecks($('doctor-checks'), pf.checks);
+      $('doctor').style.display = 'block';
+    }
+
+    // --- Route Playback (ticket 02) ----------------------------------------
+    async function setMode(m) {
+      if (routePoll) return;  // don't switch modes while a route is playing
+      if (mode === 'joystick' && m !== 'joystick') await leaveJoystick();
+      mode = m;
+      $('mode-teleport').classList.toggle('on', m === 'teleport');
+      $('mode-route').classList.toggle('on', m === 'route');
+      $('mode-joystick').classList.toggle('on', m === 'joystick');
+      $('teleport-controls').classList.toggle('hidden', m !== 'teleport');
+      $('route-controls').classList.toggle('hidden', m !== 'route');
+      $('joystick-controls').classList.toggle('hidden', m !== 'joystick');
+      if (m === 'joystick') await enterJoystick();
+    }
+
+    // --- Joystick mode (joystick-mode ticket 03) ---------------------------
+    // Show the device pin orange while any arrow key is held, green when idle.
+    function joystickMoving(isMoving) {
+      if (activeMarker) activeMarker.setIcon(isMoving ? movingIcon() : activeIcon());
+    }
+
+    function currentHeading() {
+      let north = 0, east = 0;
+      for (const k of heldKeys) { north += KEY_VEC[k][0]; east += KEY_VEC[k][1]; }
+      return [north, east];
+    }
+
+    async function pushHeading() {
+      const [n, e] = currentHeading();
+      await api().set_heading(n, e);
+      joystickMoving(n !== 0 || e !== 0);
+    }
+
+    async function enterJoystick() {
+      const speed = parseFloat($('joystick-speed').value);
+      if (!(speed > 0)) { showError('Speed must be a positive number.'); return; }
+      // Pass the map candidate so the walk can start there when nothing is active yet.
+      const cLat = candidate ? candidate.lat : null;
+      const cLng = candidate ? candidate.lng : null;
+      const res = await api().start_joystick(speed, cLat, cLng);
+      if (!res.ok) { showError(errText(res)); return; }
+      clearError();
+      heldKeys.clear();
+      setActive(res.lat, res.lng);   // green pin at the starting point
+      joystickMoving(false);
+      map.panTo([res.lat, res.lng]);
+      map.keyboard.disable();        // arrow keys drive the device, not the map
+      if (joyPoll) clearInterval(joyPoll);
+      joyPoll = setInterval(pollJoystick, 200);
+    }
+
+    async function leaveJoystick() {
+      if (joyPoll) { clearInterval(joyPoll); joyPoll = null; }
+      heldKeys.clear();
+      map.keyboard.enable();
+      joystickMoving(false);         // back to green idle pin
+      await api().stop_joystick();
+      await refreshStatus();
+    }
+
+    async function pollJoystick() {
+      const s = await api().status();
+      if (s.joystick_position) {
+        const ll = [s.joystick_position.lat, s.joystick_position.lng];
+        setActive(ll[0], ll[1]);
+        // Follow only while walking (a key is held); don't fight manual panning when idle.
+        if (heldKeys.size > 0) map.panTo(ll);
+      }
+      await refreshStatus();
+    }
+
+    function renderWaypoints() {
+      $('wp-list').textContent = waypoints.length
+        ? 'Waypoints: ' + waypoints.map((w, i) => `${i + 1} (${w.lat.toFixed(4)}, ${w.lng.toFixed(4)})`).join('   ')
+        : 'Waypoints: none — click the map (up to 3)';
+    }
+    function addWaypoint(lat, lng) {
+      if (waypoints.length >= 3) { showError('A route takes at most 3 waypoints — Reset to change.'); return; }
+      waypoints.push({ lat, lng });
+      wpMarkers.push(L.marker([lat, lng], { icon: wpIcon(waypoints.length) }).addTo(map));
+      renderWaypoints();
+    }
+    function resetWaypoints() {
+      waypoints = [];
+      wpMarkers.forEach((m) => map.removeLayer(m));
+      wpMarkers = [];
+      renderWaypoints();
+    }
+
+    // idle = not playing: Start/Reset/mode/manual-teleport enabled, Stop disabled
+    function setRouteEnabled(idle) {
+      $('route-start').disabled = !idle;
+      $('route-reset').disabled = !idle;
+      $('route-speed').disabled = !idle;
+      $('route-loops').disabled = !idle;
+      $('route-infinite').disabled = !idle;
+      $('path-save').disabled = !idle;
+      $('path-load').disabled = !idle;
+      $('path-delete').disabled = !idle;
+      $('route-stop').disabled = idle;
+      $('mode-teleport').disabled = !idle;
+      $('mode-route').disabled = !idle;
+      $('mode-joystick').disabled = !idle;
+      $('go').disabled = !idle;
+    }
+
+    function finishRoute() {
+      if (routePoll) { clearInterval(routePoll); routePoll = null; }
+      setRouteEnabled(true);
+    }
+
+    async function pollRoute() {
+      const s = await api().status();
+      if (s.route_position) {
+        const ll = [s.route_position.lat, s.route_position.lng];
+        if (!movingMarker) movingMarker = L.marker(ll, { icon: movingIcon(), zIndexOffset: 1200 }).addTo(map);
+        else movingMarker.setLatLng(ll);
+      }
+      await refreshStatus();
+      if (!s.playing) finishRoute();  // route ran to completion; holds last point
+    }
+
+    async function startRoute() {
+      if (waypoints.length < 2) { showError('Place at least two waypoints.'); return; }
+      const speed = parseFloat($('route-speed').value);
+      if (!(speed > 0)) { showError('Speed must be a positive number.'); return; }
+      const infinite = $('route-infinite').checked;
+      const loops = infinite ? null : parseInt($('route-loops').value, 10);
+      if (!infinite && !(loops >= 1)) { showError('Round trips must be at least 1.'); return; }
+      const res = await api().start_route(waypoints, speed, loops);
+      if (!res.ok) { showError(errText(res)); return; }
+      clearError();
+      setRouteEnabled(false);
+      routePoll = setInterval(pollRoute, 500);
+    }
+
+    async function stopRoute() {
+      await api().stop_route();
+      finishRoute();
+    }
+
+    // --- Saved Paths (ticket 04) -------------------------------------------
+    async function refreshPaths() {
+      const names = await api().list_paths();
+      const sel = $('path-select');
+      sel.innerHTML = '';
+      for (const n of names) {
+        const o = document.createElement('option');
+        o.value = n; o.textContent = n;
+        sel.appendChild(o);
+      }
+    }
+    async function doSavePath() {
+      const res = await api().save_path($('path-name').value, waypoints);
+      if (!res.ok) { showError(errText(res)); return; }
+      clearError();
+      $('path-name').value = '';
+      await refreshPaths();
+    }
+    async function doLoadPath() {
+      const name = $('path-select').value;
+      if (!name) return;
+      const res = await api().load_path(name);
+      if (!res.ok) { showError(errText(res)); return; }
+      resetWaypoints();
+      for (const w of res.waypoints) addWaypoint(w.lat, w.lng);
+      clearError();
+    }
+    async function doDeletePath() {
+      const name = $('path-select').value;
+      if (!name) return;
+      await api().delete_path(name);
+      await refreshPaths();
+    }
+
+    // --- hot-plug reconnect (ticket 08) ------------------------------------
+    function setEnabled(on) {
+      $('go').disabled = !on;
+      $('clr').disabled = !on;
+    }
+
+    // Disable/enable every route + save control together (used on hot-plug).
+    function disableRouteControls(disabled) {
+      ['route-start', 'route-stop', 'route-reset', 'route-speed', 'route-loops',
+       'route-infinite', 'path-save', 'path-load', 'path-delete',
+       'mode-teleport', 'mode-route', 'mode-joystick'].forEach((id) => { $(id).disabled = disabled; });
+    }
+
+    // Called from Python (app.py) when the tracked device disappears.
+    window.skyOnLost = async function () {
+      // The route/joystick (if any) is already torn down server-side; mirror it
+      // here: stop polling, drop the moving pin, and lock every control.
+      if (routePoll) { clearInterval(routePoll); routePoll = null; }
+      if (joyPoll) { clearInterval(joyPoll); joyPoll = null; }
+      heldKeys.clear();
+      if (map && map.keyboard) map.keyboard.enable();
+      if (movingMarker) { map.removeLayer(movingMarker); movingMarker = null; }
+      setEnabled(false);
+      disableRouteControls(true);
+      showError('Device disconnected — route stopped. Reconnect the cable to continue.');
+      await refreshStatus();
+    };
+
+    // Called from Python when a device reappears after a loss.
+    window.skyOnFound = async function () {
+      const res = await api().begin();  // reopen the tunnel (does not move GPS)
+      if (!res.ok) { showError(errText(res)); return; }
+      setEnabled(true);
+      disableRouteControls(false);
+      setRouteEnabled(true);  // back to the idle baseline (Stop disabled)
+      clearError();
+      await refreshStatus();
+      const la = await api().last_active();
+      if (!la) return;  // nothing to offer
+      $('reconnect-msg').textContent =
+        `Reapply the last override at ${la.lat.toFixed(6)}, ${la.lng.toFixed(6)}?`;
+      $('reconnect').style.display = 'block';
+    };
+
+    async function reapplyYes() {
+      $('reconnect').style.display = 'none';
+      const res = await api().reapply();
+      if (res.ok) { clearError(); setActive(res.lat, res.lng); } else showError(errText(res));
+      await refreshStatus();
+    }
+
+    function wire() {
+      $('go').addEventListener('click', doTeleport);
+      $('clr').addEventListener('click', doClear);
+      $('coord').addEventListener('keydown', async (e) => {
+        if (e.key !== 'Enter') return;
+        const c = parseCoordField();
+        if (!c) { showError('Type a coordinate as "lat, lng".'); return; }
+        // Validate through the same rule a teleport uses (config.parse_coordinate).
+        const v = await api().validate_coordinate(c.lat, c.lng);
+        if (v.ok) { clearError(); setCandidate(v.lat, v.lng, true); }
+        else showError(errText(v));
+      });
+      $('device-select').addEventListener('change', (e) => beginWith(e.target.value));
+      $('doctor-btn').addEventListener('click', openDoctor);
+      $('doctor-close').addEventListener('click', () => { $('doctor').style.display = 'none'; });
+      $('gate-retry').addEventListener('click', runGate);
+      $('reconnect-yes').addEventListener('click', reapplyYes);
+      $('reconnect-no').addEventListener('click', () => { $('reconnect').style.display = 'none'; });
+      $('mode-teleport').addEventListener('click', () => setMode('teleport'));
+      $('mode-route').addEventListener('click', () => setMode('route'));
+      $('mode-joystick').addEventListener('click', () => setMode('joystick'));
+      $('joystick-speed').addEventListener('input', () => {
+        if (mode !== 'joystick') return;
+        const speed = parseFloat($('joystick-speed').value);
+        if (speed > 0) api().set_joystick_speed(speed);
+      });
+      document.addEventListener('keydown', (e) => {
+        if (mode !== 'joystick' || !(e.key in KEY_VEC)) return;
+        e.preventDefault();
+        if (heldKeys.has(e.key)) return;  // ignore OS auto-repeat
+        heldKeys.add(e.key);
+        pushHeading();
+      });
+      document.addEventListener('keyup', (e) => {
+        if (mode !== 'joystick' || !(e.key in KEY_VEC)) return;
+        e.preventDefault();
+        heldKeys.delete(e.key);
+        pushHeading();
+      });
+      $('route-start').addEventListener('click', startRoute);
+      $('route-stop').addEventListener('click', stopRoute);
+      $('route-reset').addEventListener('click', resetWaypoints);
+      $('path-save').addEventListener('click', doSavePath);
+      $('path-load').addEventListener('click', doLoadPath);
+      $('path-delete').addEventListener('click', doDeletePath);
+      setRouteEnabled(true);  // Stop starts disabled until a route runs
+    }
+
+    async function boot() { wire(); await runGate(); }
+
+    if (window.pywebview && window.pywebview.api) boot();
+    else window.addEventListener('pywebviewready', boot);
+  </script>
+</body>
+</html>

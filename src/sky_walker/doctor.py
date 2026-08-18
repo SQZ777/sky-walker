@@ -9,7 +9,7 @@ and stops the report from being one big traceback.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
 
@@ -19,6 +19,32 @@ class Check:
     ok: bool
     detail: str
     fix: str = ""
+
+
+@dataclass
+class DoctorReport:
+    """The structured outcome of a preflight run.
+
+    `checks` holds the checks that actually ran, in order; because later checks
+    depend on earlier ones the run stops at the first failure, so a failing
+    report ends with the failed check. `ok` is True only if every check passed.
+    """
+
+    checks: List[Check] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return all(c.ok for c in self.checks)
+
+    def as_dict(self) -> dict:
+        """Plain dict for the GUI (startup gate and Doctor panel)."""
+        return {
+            "ok": self.ok,
+            "checks": [
+                {"name": c.name, "ok": c.ok, "detail": c.detail, "fix": c.fix}
+                for c in self.checks
+            ],
+        }
 
 
 def _check_backend() -> Check:
@@ -86,28 +112,45 @@ def _check_supported(udid: Optional[str]) -> Check:
                  "This iOS band is out of scope; see docs/adr/0001.")
 
 
-def run(udid: Optional[str] = None) -> int:
-    """Run all checks, print a report, return 0 if all passed else 1."""
-    checks: List[Callable[[], Check]] = [
-        _check_backend,
-        _check_usbmux,
-        lambda: _check_device(udid),
-        lambda: _check_supported(udid),
-    ]
+def collect(
+    udid: Optional[str] = None,
+    checks: Optional[List[Callable[[], Check]]] = None,
+) -> DoctorReport:
+    """Run the preflight checks and return a structured DoctorReport.
 
-    print("sky-walker doctor\n")
-    all_ok = True
+    Runs each check in order and stops at the first failure, because later
+    checks depend on earlier ones (no device => no version check, etc.). The
+    UI and the CLI both build on this so the report is produced in exactly one
+    place; presentation (printing, rendering) lives elsewhere.
+    """
+    if checks is None:
+        checks = [
+            _check_backend,
+            _check_usbmux,
+            lambda: _check_device(udid),
+            lambda: _check_supported(udid),
+        ]
+
+    report = DoctorReport()
     for run_check in checks:
         c = run_check()
+        report.checks.append(c)
+        if not c.ok:
+            break  # later checks depend on this one — stop at the first failure
+    return report
+
+
+def run(udid: Optional[str] = None) -> int:
+    """Run all checks, print a report, return 0 if all passed else 1."""
+    report = collect(udid)
+
+    print("sky-walker doctor\n")
+    for c in report.checks:
         mark = "OK  " if c.ok else "FAIL"
         print(f"[{mark}] {c.name}: {c.detail}")
-        if not c.ok:
-            all_ok = False
-            if c.fix:
-                print(f"        fix: {c.fix}")
-            # Later checks depend on earlier ones — stop at the first failure.
-            break
+        if not c.ok and c.fix:
+            print(f"        fix: {c.fix}")
 
-    print("\nAll good — sky-walker is ready." if all_ok
+    print("\nAll good — sky-walker is ready." if report.ok
           else "\nResolve the issue above and re-run `sky-walker doctor`.")
-    return 0 if all_ok else 1
+    return 0 if report.ok else 1

@@ -15,8 +15,36 @@ Setting the override to a single static coordinate and holding it there. The MVP
 _Avoid_: jump, set point
 
 **Route Playback**:
-Feeding a sequence of coordinates (e.g. from a GPX file) so the device appears to move along a path. A later capability, distinct from Teleport.
+Moving the override along an ordered path of Waypoints so the device appears to travel, rather than holding one point. Distinct from Teleport.
 _Avoid_: simulate movement, drive, track
+
+**Waypoint**:
+One of the ordered points that define a Route Playback path. The path is traversed as a Round Trip.
+_Avoid_: node, marker, stop
+
+**Round Trip**:
+One complete out-and-back traversal of the Waypoints, returning to the start (e.g. A→B→C→B→A). The unit that Route Playback's loop count counts.
+_Avoid_: lap, cycle, loop (as the noun for a single pass), ping-pong
+
+**Movement Speed**:
+The ground speed at which the simulated position advances between Waypoints during Route Playback.
+_Avoid_: velocity, pace, rate
+
+**Saved Path**:
+A named, persisted ordered set of Waypoints the user can reload for Route Playback.
+_Avoid_: route, preset, favorite
+
+**Joystick Mode**:
+Driving the override live with the keyboard arrow keys: hold a key and the device walks in that compass direction (↑ north, ↓ south, ← west, → east) at the Movement Speed, releasing stops it. A third mode beside Teleport and Route Playback, and mutually exclusive with them.
+_Avoid_: manual mode, drive mode, WASD
+
+**Heading**:
+The current Joystick direction, expressed as a (north, east) vector. A zero Heading holds position. Two keys combine into a diagonal Heading that still covers Movement Speed (not √2× it).
+_Avoid_: bearing, course, angle
+
+**Walker**:
+The background driver of Joystick Mode: it advances the device each tick from the current Heading and Movement Speed. Analogous to Route Playback's player, but its direction is mutable mid-run rather than a fixed Waypoint stream.
+_Avoid_: joystick driver, mover, walker thread
 
 **Session**:
 The live connection during which a Location Override is in effect. When the Session ends (cleared, process exits, or device reboots) the device returns to its real GPS.
