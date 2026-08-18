@@ -35,11 +35,11 @@
     "timing": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["stabilization_seconds", "maximum_capture_seconds", "minimum_post_stabilization_samples"],
+      "required": ["stabilization_seconds", "maximum_capture_seconds", "minimum_post_stabilization_callbacks"],
       "properties": {
         "stabilization_seconds": {"const": 10},
         "maximum_capture_seconds": {"const": 120},
-        "minimum_post_stabilization_samples": {"const": 10}
+        "minimum_post_stabilization_callbacks": {"const": 10}
       }
     },
     "stimulus": {

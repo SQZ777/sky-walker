@@ -60,7 +60,7 @@ def create_session(
         "timing": {
             "stabilization_seconds": 10,
             "maximum_capture_seconds": 120,
-            "minimum_post_stabilization_samples": 10,
+            "minimum_post_stabilization_callbacks": 10,
         },
         "stimulus": {
             "primary": {

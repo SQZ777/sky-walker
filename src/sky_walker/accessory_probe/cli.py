@@ -92,7 +92,11 @@ def run(args: argparse.Namespace) -> int:
         return 0
     if args.probe_action == "validate":
         try:
-            result = validate_files(args.manifest, args.jsonl)
+            result = validate_files(
+                args.manifest,
+                args.jsonl,
+                usb_detector=detect_apple_usb,
+            )
         except ProbeInputError as exc:
             print(json.dumps({
                 "schema_version": 1,
@@ -103,8 +107,9 @@ def run(args: argparse.Namespace) -> int:
             return 3
         print(json.dumps(result.as_dict()))
         print(
-            f"{result.verdict.upper()}: {result.eligible_location_records} eligible "
-            f"of {result.total_location_records} location records",
+            f"{result.verdict.upper()}: {result.eligible_callback_count} eligible callbacks; "
+            f"{result.eligible_location_records} eligible of "
+            f"{result.total_location_records} location records",
             file=sys.stderr,
         )
         return {"pass": 0, "fail": 1, "inconclusive": 2}[result.verdict]

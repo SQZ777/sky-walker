@@ -41,7 +41,7 @@ Sky Walker 目前透過 Windows 上的 Apple developer service 對實體 iPhone 
 23. As a Windows developer, I want schema errors reported separately from source failures, so that malformed evidence is not classified as a failed accessory.
 24. As a Windows developer, I want the validator to enforce Session ID and scenario agreement, so that evidence cannot be attached to the wrong run.
 25. As a Windows developer, I want the validator to ignore stabilization samples without deleting them from the artifact, so that the verdict is deterministic while the raw evidence remains intact.
-26. As a Windows developer, I want a pass to require ten consecutive accessory-produced samples, so that a transient or mixed source cannot produce a false success.
+26. As a Windows developer, I want a pass to require ten consecutive accessory-produced callbacks, so that a transient or batched update cannot produce a false success.
 27. As a Windows developer, I want insufficient, mixed, nil-source, or connection-ambiguous evidence classified as inconclusive, so that uncertainty is not mislabeled as failure.
 28. As a Windows developer, I want complete evidence with consistently false accessory flags classified as fail, so that a tested source can be rejected clearly.
 29. As a Windows developer, I want a machine-readable verdict as well as a human summary, so that later automation can consume the same decision.
@@ -83,7 +83,7 @@ Sky Walker 目前透過 Windows 上的 Apple developer service 對實體 iPhone 
 - **USB proof:** iAnyGo Bluetooth validation requires both a user confirmation and an independent Windows PnP check showing no physical Apple USB connection. A detected USB connection prevents pass.
 - **Stabilization window:** Validation excludes the first ten seconds from verdict calculation while preserving those records in the raw artifact.
 - **Sample requirement:** Validation needs at least ten post-stabilization callbacks and waits no longer than 120 seconds during capture guidance.
-- **Accessory pass rule:** Pass requires at least ten consecutive post-stabilization records with non-nil source information and `isProducedByAccessory == true`, plus satisfied Bluetooth USB-disconnection evidence where relevant.
+- **Accessory pass rule:** Pass requires at least ten consecutive post-stabilization callbacks with non-nil source information and `isProducedByAccessory == true`, plus satisfied Bluetooth USB-disconnection evidence where relevant. Multiple `CLLocation` values delivered in one callback count as one callback.
 - **Fail rule:** Fail requires structurally complete evidence, a confirmed scenario, enough samples, an active expected location, and consistently false accessory attribution.
 - **Inconclusive rule:** Insufficient samples, mixed flags, nil source information, uncertain USB state, missing environment metadata, or an inactive expected location are inconclusive rather than fail.
 - **Coordinate sanity gate:** The first benchmark requires the observed position to be within 25 metres horizontally of the expected position. Altitude, speed, course, and reported accuracy are recorded but do not determine the initial Probe Verdict.

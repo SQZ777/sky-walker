@@ -42,7 +42,7 @@ def test_probe_new_creates_versioned_manifest_and_prints_steps(tmp_path, capsys)
     assert manifest["timing"] == {
         "stabilization_seconds": 10,
         "maximum_capture_seconds": 120,
-        "minimum_post_stabilization_samples": 10,
+        "minimum_post_stabilization_callbacks": 10,
     }
     assert manifest["stimulus"]["primary"] == {
         "kind": "static",
@@ -157,7 +157,15 @@ def test_probe_new_rejects_out_of_range_coordinate(tmp_path, capsys):
     assert "latitude" in capsys.readouterr().err
 
 
-def test_probe_validate_emits_machine_and_human_pass_result(capsys):
+def test_probe_validate_emits_machine_and_human_pass_result(capsys, monkeypatch):
+    from sky_walker.accessory_probe import cli as probe_cli
+    from sky_walker.accessory_probe.usb import AppleUsbEvidence
+
+    monkeypatch.setattr(
+        probe_cli,
+        "detect_apple_usb",
+        lambda: AppleUsbEvidence(status="absent", device_count=0),
+    )
     exit_code = main([
         "probe",
         "validate",
@@ -176,12 +184,24 @@ def test_probe_validate_emits_machine_and_human_pass_result(capsys):
         "reason_codes": ["accessory-attribution-confirmed"],
         "total_location_records": 10,
         "eligible_location_records": 10,
+        "total_callback_count": 10,
+        "eligible_callback_count": 10,
+        "validation_apple_usb_status": "absent",
+        "validation_apple_usb_device_count": 0,
     }
     assert "PASS" in captured.err
-    assert "10 eligible" in captured.err
+    assert "10 eligible callbacks" in captured.err
 
 
-def test_probe_validate_uses_distinct_exit_statuses(tmp_path, capsys):
+def test_probe_validate_uses_distinct_exit_statuses(tmp_path, capsys, monkeypatch):
+    from sky_walker.accessory_probe import cli as probe_cli
+    from sky_walker.accessory_probe.usb import AppleUsbEvidence
+
+    monkeypatch.setattr(
+        probe_cli,
+        "detect_apple_usb",
+        lambda: AppleUsbEvidence(status="absent", device_count=0),
+    )
     manifest = FIXTURES / "pass.manifest.json"
     lines = (FIXTURES / "pass.jsonl").read_text(encoding="utf-8").splitlines()
 
@@ -207,3 +227,27 @@ def test_probe_validate_uses_distinct_exit_statuses(tmp_path, capsys):
     invalid_output = capsys.readouterr()
     assert json.loads(invalid_output.out)["verdict"] == "invalid"
     assert "INVALID" in invalid_output.err
+
+
+def test_probe_validate_rechecks_apple_usb_at_validation_time(capsys, monkeypatch):
+    from sky_walker.accessory_probe import cli as probe_cli
+    from sky_walker.accessory_probe.usb import AppleUsbEvidence
+
+    monkeypatch.setattr(
+        probe_cli,
+        "detect_apple_usb",
+        lambda: AppleUsbEvidence(status="present", device_count=1),
+    )
+
+    exit_code = main([
+        "probe",
+        "validate",
+        str(FIXTURES / "pass.manifest.json"),
+        str(FIXTURES / "pass.jsonl"),
+    ])
+
+    assert exit_code == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["verdict"] == "inconclusive"
+    assert result["reason_codes"] == ["apple-usb-present"]
+    assert result["validation_apple_usb_status"] == "present"

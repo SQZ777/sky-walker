@@ -7,10 +7,19 @@ from pathlib import Path
 
 import pytest
 
-from sky_walker.accessory_probe.validator import validate_files
+from sky_walker.accessory_probe.usb import AppleUsbEvidence
+from sky_walker.accessory_probe.validator import validate_files as validate_artifacts
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "accessory_probe"
+
+
+def validate_files(manifest_path, jsonl_path):
+    return validate_artifacts(
+        manifest_path,
+        jsonl_path,
+        usb_detector=lambda: AppleUsbEvidence(status="absent", device_count=0),
+    )
 
 
 def _write_fixture(tmp_path, *, mutate_manifest=None, mutate_records=None):
@@ -48,7 +57,7 @@ def test_complete_non_accessory_evidence_fails(tmp_path):
     assert result.reason_codes == ("accessory-attribution-not-observed",)
 
 
-def test_fewer_than_ten_eligible_samples_is_inconclusive(tmp_path):
+def test_fewer_than_ten_eligible_callbacks_is_inconclusive(tmp_path):
     def remove_last_location(records):
         records.pop()
 
@@ -59,8 +68,9 @@ def test_fewer_than_ten_eligible_samples_is_inconclusive(tmp_path):
     result = validate_files(manifest_path, jsonl_path)
 
     assert result.verdict == "inconclusive"
-    assert result.reason_codes == ("insufficient-samples",)
+    assert result.reason_codes == ("insufficient-callbacks",)
     assert result.eligible_location_records == 9
+    assert result.eligible_callback_count == 9
 
 
 def test_mixed_accessory_flags_are_inconclusive(tmp_path):
@@ -186,7 +196,7 @@ def test_stabilization_records_remain_counted_but_do_not_affect_verdict(tmp_path
         transitional = []
         for second in range(10):
             record = dict(records[1])
-            record["callback_sequence"] = -(second + 1)
+            record["callback_sequence"] = second + 11
             record["receipt_timestamp"] = f"2026-08-18T00:00:0{second}Z"
             record["location_timestamp"] = f"2026-08-18T00:00:0{second}Z"
             record["is_produced_by_accessory"] = False
@@ -204,3 +214,21 @@ def test_stabilization_records_remain_counted_but_do_not_affect_verdict(tmp_path
     assert result.verdict == "pass"
     assert result.total_location_records == 20
     assert result.eligible_location_records == 10
+
+
+def test_ten_locations_from_one_callback_are_insufficient(tmp_path):
+    def collapse_into_one_callback(records):
+        for location_index, record in enumerate(records[1:]):
+            record["callback_sequence"] = 1
+            record["location_index"] = location_index
+
+    manifest_path, jsonl_path = _write_fixture(
+        tmp_path, mutate_records=collapse_into_one_callback
+    )
+
+    result = validate_files(manifest_path, jsonl_path)
+
+    assert result.verdict == "inconclusive"
+    assert result.reason_codes == ("insufficient-callbacks",)
+    assert result.eligible_location_records == 10
+    assert result.eligible_callback_count == 1

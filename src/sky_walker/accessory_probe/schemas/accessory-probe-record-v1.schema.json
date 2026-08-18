@@ -60,7 +60,7 @@
             "record_type": {"const": "location"},
             "session_id": {"type": "string"},
             "scenario": {"type": "string"},
-            "callback_sequence": {"type": "integer"},
+            "callback_sequence": {"type": "integer", "minimum": 1},
             "location_index": {"type": "integer", "minimum": 0},
             "location_timestamp": {"type": "string", "format": "date-time"},
             "receipt_timestamp": {"type": "string", "format": "date-time"},

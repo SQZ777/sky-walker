@@ -41,7 +41,7 @@ def test_nil_source_marker_with_boolean_flags_is_invalid(tmp_path):
         "\n".join(json.dumps(record) for record in records), encoding="utf-8"
     )
 
-    with pytest.raises(ProbeInputError, match="source information"):
+    with pytest.raises(ProbeInputError, match="is_simulated_by_software"):
         validate_files(manifest_path, jsonl_path)
 
 
@@ -77,13 +77,16 @@ def test_malformed_jsonl_is_invalid(tmp_path):
         validate_files(FIXTURES / "pass.manifest.json", jsonl_path)
 
 
-@pytest.mark.parametrize("field", ["session_id", "scenario"])
-def test_location_record_must_match_manifest(field, tmp_path):
+@pytest.mark.parametrize(
+    "field,wrong_value",
+    [("session_id", "WXYZ6789"), ("scenario", "real-gps")],
+)
+def test_location_record_must_match_manifest(field, wrong_value, tmp_path):
     records = [
         json.loads(line)
         for line in (FIXTURES / "pass.jsonl").read_text(encoding="utf-8").splitlines()
     ]
-    records[-1][field] = "WRONG"
+    records[-1][field] = wrong_value
     jsonl_path = tmp_path / f"wrong-{field}.jsonl"
     jsonl_path.write_text(
         "\n".join(json.dumps(record) for record in records), encoding="utf-8"
@@ -130,6 +133,51 @@ def test_session_id_must_be_eight_safe_characters(tmp_path):
 
     with pytest.raises(ProbeInputError, match="session_id"):
         validate_files(manifest_path, jsonl_path)
+
+
+def test_manifest_cannot_lower_minimum_callback_requirement(tmp_path):
+    manifest = _manifest_fixture()
+    manifest["timing"]["minimum_post_stabilization_callbacks"] = 0
+    manifest_path = tmp_path / "zero-minimum.manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ProbeInputError, match="minimum_post_stabilization_callbacks"):
+        validate_files(manifest_path, FIXTURES / "pass.jsonl")
+
+
+def test_manifest_rejects_fields_outside_published_schema(tmp_path):
+    manifest = _manifest_fixture()
+    manifest["unpublished_override"] = True
+    manifest_path = tmp_path / "extra-field.manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ProbeInputError, match="unpublished_override"):
+        validate_files(manifest_path, FIXTURES / "pass.jsonl")
+
+
+def test_location_rejects_wrong_numeric_type(tmp_path):
+    records = _record_fixtures()
+    records[-1]["latitude"] = "not-a-number"
+    jsonl_path = tmp_path / "wrong-type.jsonl"
+    jsonl_path.write_text(
+        "\n".join(json.dumps(record) for record in records), encoding="utf-8"
+    )
+
+    with pytest.raises(ProbeInputError, match="latitude"):
+        validate_files(FIXTURES / "pass.manifest.json", jsonl_path)
+
+
+def test_duplicate_callback_location_identity_is_invalid(tmp_path):
+    records = _record_fixtures()
+    records[-1]["callback_sequence"] = records[-2]["callback_sequence"]
+    records[-1]["location_index"] = records[-2]["location_index"]
+    jsonl_path = tmp_path / "duplicate-callback-location.jsonl"
+    jsonl_path.write_text(
+        "\n".join(json.dumps(record) for record in records), encoding="utf-8"
+    )
+
+    with pytest.raises(ProbeInputError, match="duplicates callback_sequence"):
+        validate_files(FIXTURES / "pass.manifest.json", jsonl_path)
 
 
 def _manifest_fixture():

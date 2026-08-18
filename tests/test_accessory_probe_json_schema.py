@@ -9,7 +9,7 @@ from jsonschema import Draft202012Validator
 
 
 ROOT = Path(__file__).parents[1]
-SCHEMAS = ROOT / "docs" / "schemas"
+SCHEMAS = ROOT / "src" / "sky_walker" / "accessory_probe" / "schemas"
 FIXTURES = Path(__file__).parent / "fixtures" / "accessory_probe"
 
 
