@@ -29,6 +29,8 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("gui", help="Open the desktop map GUI (needs the [gui] extra).")
     sub.add_parser("doctor", help="Check that every prerequisite for a session is met.")
     sub.add_parser("clear", help="Release any active override and return to real GPS.")
+    from sky_walker.accessory_probe.cli import add_probe_parser
+    add_probe_parser(sub)
     # No subcommand => interactive mode (handled in main()).
     return parser
 
@@ -48,6 +50,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             clear_once(args.udid)
             print("Override cleared — device is back on its real GPS.")
             return 0
+        if args.command == "probe":
+            from sky_walker.accessory_probe.cli import run
+            return run(args)
         # Default: interactive mode.
         from sky_walker.interactive import run_interactive
         return run_interactive(args.udid)

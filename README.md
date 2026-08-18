@@ -54,6 +54,23 @@ sky-walker> exit                                          # leave (also reverts)
 Leaving the process — `exit`, Ctrl-C, or a crash — reverts the device to its real
 GPS (see [docs/adr/0002](docs/adr/0002-foreground-interactive-session-model.md)).
 
+## Experimental Core Location source probe
+
+The Accessory Attribution Spike is intentionally separate from Location Override.
+Windows creates a Source Test Session and validates JSONL exported by the minimal
+iOS Source Probe:
+
+```bash
+sky-walker probe new real-gps --ios-version 26.4 --probe-build 1
+sky-walker probe validate artifacts/probe-runs/SESSION.manifest.json capture.jsonl
+```
+
+The iOS project lives at `poc/ios-source-probe/` and requires a Mac with Xcode only
+for build, signing, and installation. See
+[`docs/probe/mac-build-and-smoke-test.md`](docs/probe/mac-build-and-smoke-test.md).
+This phase does not implement a Windows Bluetooth GPS server and does not assume
+that iAnyGo or a generic Bluetooth profile produces accessory-attributed locations.
+
 ## Status
 
 Design and skeleton, validated against an iPhone 15 Pro on iOS 26.4: device

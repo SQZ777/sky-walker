@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SQZ777/sky-walker/schemas/accessory-probe-record-v1.schema.json",
+  "title": "Sky Walker Source Probe JSONL record v1",
+  "oneOf": [
+    {"$ref": "#/$defs/capture"},
+    {"$ref": "#/$defs/location"}
+  ],
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "required": ["schema_version", "record_type", "session_id", "scenario"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "record_type": {"type": "string"},
+        "session_id": {"type": "string", "pattern": "^[A-Z2-9]{8}$"},
+        "scenario": {
+          "enum": ["real-gps", "sky-walker-usb", "ianygo-general", "ianygo-bluetooth"]
+        }
+      }
+    },
+    "capture": {
+      "allOf": [
+        {"$ref": "#/$defs/identity"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version", "record_type", "session_id", "scenario",
+            "capture_started_at", "capture_stopped_at", "ios_version", "source_probe_build"
+          ],
+          "properties": {
+            "schema_version": {"const": 1},
+            "record_type": {"const": "capture"},
+            "session_id": {"type": "string"},
+            "scenario": {"type": "string"},
+            "capture_started_at": {"type": "string", "format": "date-time"},
+            "capture_stopped_at": {"type": "string", "format": "date-time"},
+            "ios_version": {"type": ["string", "null"]},
+            "source_probe_build": {"type": ["string", "null"]}
+          }
+        }
+      ]
+    },
+    "location": {
+      "allOf": [
+        {"$ref": "#/$defs/identity"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version", "record_type", "session_id", "scenario",
+            "callback_sequence", "location_index", "location_timestamp", "receipt_timestamp",
+            "latitude", "longitude", "altitude", "horizontal_accuracy", "vertical_accuracy",
+            "speed", "course", "source_information_present",
+            "is_simulated_by_software", "is_produced_by_accessory"
+          ],
+          "properties": {
+            "schema_version": {"const": 1},
+            "record_type": {"const": "location"},
+            "session_id": {"type": "string"},
+            "scenario": {"type": "string"},
+            "callback_sequence": {"type": "integer"},
+            "location_index": {"type": "integer", "minimum": 0},
+            "location_timestamp": {"type": "string", "format": "date-time"},
+            "receipt_timestamp": {"type": "string", "format": "date-time"},
+            "latitude": {"type": "number", "minimum": -90, "maximum": 90},
+            "longitude": {"type": "number", "minimum": -180, "maximum": 180},
+            "altitude": {"type": "number"},
+            "horizontal_accuracy": {"type": "number"},
+            "vertical_accuracy": {"type": "number"},
+            "speed": {"type": "number"},
+            "course": {"type": "number"},
+            "source_information_present": {"type": "boolean"},
+            "is_simulated_by_software": {"type": ["boolean", "null"]},
+            "is_produced_by_accessory": {"type": ["boolean", "null"]}
+          },
+          "allOf": [
+            {
+              "if": {"properties": {"source_information_present": {"const": true}}},
+              "then": {
+                "properties": {
+                  "is_simulated_by_software": {"type": "boolean"},
+                  "is_produced_by_accessory": {"type": "boolean"}
+                }
+              },
+              "else": {
+                "properties": {
+                  "is_simulated_by_software": {"type": "null"},
+                  "is_produced_by_accessory": {"type": "null"}
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

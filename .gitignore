@@ -6,6 +6,11 @@ build/
 dist/
 .venv/
 venv/
+.python-runtime/
+python-*.log
+
+# Physical-device evidence can contain sensitive environment details.
+artifacts/probe-runs/
 
 # Editors
 .vscode/

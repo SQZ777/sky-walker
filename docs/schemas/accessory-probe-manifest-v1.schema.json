@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SQZ777/sky-walker/schemas/accessory-probe-manifest-v1.schema.json",
+  "title": "Sky Walker Source Test Session manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "session_id",
+    "scenario",
+    "created_at",
+    "expected_location",
+    "timing",
+    "stimulus",
+    "environment",
+    "connection_evidence"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "session_id": {"type": "string", "pattern": "^[A-Z2-9]{8}$"},
+    "scenario": {
+      "enum": ["real-gps", "sky-walker-usb", "ianygo-general", "ianygo-bluetooth"]
+    },
+    "created_at": {"type": "string", "format": "date-time"},
+    "expected_location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["latitude", "longitude", "horizontal_tolerance_m"],
+      "properties": {
+        "latitude": {"type": "number", "minimum": -90, "maximum": 90},
+        "longitude": {"type": "number", "minimum": -180, "maximum": 180},
+        "horizontal_tolerance_m": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stabilization_seconds", "maximum_capture_seconds", "minimum_post_stabilization_samples"],
+      "properties": {
+        "stabilization_seconds": {"const": 10},
+        "maximum_capture_seconds": {"const": 120},
+        "minimum_post_stabilization_samples": {"const": 10}
+      }
+    },
+    "stimulus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary", "fallback"],
+      "properties": {
+        "primary": {"$ref": "#/$defs/staticStimulus"},
+        "fallback": {"$ref": "#/$defs/routeStimulus"}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ios_version", "source_probe_build", "windows_version", "location_product_version", "bluetooth_adapter"],
+      "properties": {
+        "ios_version": {"type": ["string", "null"]},
+        "source_probe_build": {"type": ["string", "null"]},
+        "windows_version": {"type": ["string", "null"]},
+        "location_product_version": {"type": ["string", "null"]},
+        "bluetooth_adapter": {"type": ["string", "null"]}
+      }
+    },
+    "connection_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user_confirmed_usb_disconnected", "windows_apple_usb_status", "windows_apple_usb_device_count"],
+      "properties": {
+        "user_confirmed_usb_disconnected": {"type": ["boolean", "null"]},
+        "windows_apple_usb_status": {"enum": ["absent", "present", "error", "not-required"]},
+        "windows_apple_usb_device_count": {"type": "integer", "minimum": 0}
+      }
+    }
+  },
+  "$defs": {
+    "coordinate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["latitude", "longitude"],
+      "properties": {
+        "latitude": {"type": "number", "minimum": -90, "maximum": 90},
+        "longitude": {"type": "number", "minimum": -180, "maximum": 180}
+      }
+    },
+    "staticStimulus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "latitude", "longitude"],
+      "properties": {
+        "kind": {"const": "static"},
+        "latitude": {"type": "number", "minimum": -90, "maximum": 90},
+        "longitude": {"type": "number", "minimum": -180, "maximum": 180}
+      }
+    },
+    "routeStimulus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "waypoints", "update_frequency_hz", "movement_speed_kmh"],
+      "properties": {
+        "kind": {"const": "two-point-route"},
+        "waypoints": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {"$ref": "#/$defs/coordinate"}
+        },
+        "update_frequency_hz": {"const": 1.0},
+        "movement_speed_kmh": {"const": 5.0}
+      }
+    }
+  }
+}
