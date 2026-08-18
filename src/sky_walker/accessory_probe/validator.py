@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence
 
-from sky_walker.accessory_probe import SCHEMA_VERSION
+from sky_walker.accessory_probe import (
+    SCHEMA_VERSION,
+    ScenarioDefinition,
+    scenario_definition,
+)
 from sky_walker.accessory_probe.errors import ProbeInputError
 from sky_walker.accessory_probe.evidence import ProbeEvidence, load_evidence
 from sky_walker.accessory_probe.usb import AppleUsbEvidence
@@ -55,10 +59,10 @@ def _distance_metres(lat1: float, lon1: float, lat2: float, lon2: float) -> floa
 
 
 def _validation_usb(
-    scenario: str,
+    scenario: ScenarioDefinition,
     detector: Optional[Callable[[], AppleUsbEvidence]],
 ) -> AppleUsbEvidence:
-    if scenario != "ianygo-bluetooth":
+    if not scenario.requires_usb_disconnection:
         return AppleUsbEvidence(status="not-required", device_count=0)
     if detector is None:
         return AppleUsbEvidence(status="error", device_count=0)
@@ -69,21 +73,19 @@ def _validation_usb(
 
 
 def _environment_complete(evidence: ProbeEvidence) -> bool:
-    required = (
-        "ios_version",
-        "source_probe_build",
-        "windows_version",
-        "location_product_version",
+    required_values = (
+        evidence.environment.ios_version,
+        evidence.environment.source_probe_build,
+        evidence.environment.windows_version,
+        evidence.environment.location_product_version,
     )
     complete = all(
-        isinstance(evidence.environment.get(key), str)
-        and bool(evidence.environment[key].strip())
-        for key in required
+        isinstance(value, str) and bool(value.strip()) for value in required_values
     )
-    if evidence.scenario == "ianygo-bluetooth":
+    if scenario_definition(evidence.scenario).requires_usb_disconnection:
         complete = complete and (
-            isinstance(evidence.environment.get("bluetooth_adapter"), str)
-            and bool(evidence.environment["bluetooth_adapter"].strip())
+            isinstance(evidence.environment.bluetooth_adapter, str)
+            and bool(evidence.environment.bluetooth_adapter.strip())
         )
     return complete
 
@@ -93,51 +95,56 @@ def _derive_verdict(
     validation_usb: AppleUsbEvidence,
 ) -> tuple[str, str]:
     eligible = evidence.eligible_location_records
+    scenario = scenario_definition(evidence.scenario)
     in_range = [
         record
         for record in eligible
         if _distance_metres(
             evidence.expected_latitude,
             evidence.expected_longitude,
-            float(record["latitude"]),
-            float(record["longitude"]),
+            record.latitude,
+            record.longitude,
         )
         <= evidence.horizontal_tolerance_m
     ]
     source_complete = all(
-        record.get("source_information_present") is True
-        and isinstance(record.get("is_simulated_by_software"), bool)
-        and isinstance(record.get("is_produced_by_accessory"), bool)
+        record.source_information_present is True
+        and isinstance(record.is_simulated_by_software, bool)
+        and isinstance(record.is_produced_by_accessory, bool)
         for record in eligible
     )
-    attributed = all(record.get("is_produced_by_accessory") is True for record in eligible)
+    attributed = all(
+        record.is_produced_by_accessory is True for record in eligible
+    )
     not_attributed = all(
-        record.get("is_produced_by_accessory") is False for record in eligible
+        record.is_produced_by_accessory is False for record in eligible
     )
     manifest_usb_present = (
-        evidence.connection.get("windows_apple_usb_status") == "present"
-        or evidence.connection.get("windows_apple_usb_device_count", 0) > 0
+        evidence.connection.windows_apple_usb_status == "present"
+        or evidence.connection.windows_apple_usb_device_count > 0
     )
     validation_usb_present = (
         validation_usb.status == "present" or validation_usb.device_count > 0
     )
-    usb_complete = evidence.scenario != "ianygo-bluetooth" or (
-        evidence.connection.get("user_confirmed_usb_disconnected") is True
-        and evidence.connection.get("windows_apple_usb_status") == "absent"
-        and evidence.connection.get("windows_apple_usb_device_count") == 0
+    usb_complete = not scenario.requires_usb_disconnection or (
+        evidence.connection.user_confirmed_usb_disconnected is True
+        and evidence.connection.windows_apple_usb_status == "absent"
+        and evidence.connection.windows_apple_usb_device_count == 0
         and validation_usb.status == "absent"
         and validation_usb.device_count == 0
     )
     environment_complete = _environment_complete(evidence)
     capture_environment_complete = all(
-        isinstance(evidence.capture.get(key), str)
-        and bool(evidence.capture[key].strip())
-        for key in ("ios_version", "source_probe_build")
+        isinstance(value, str) and bool(value.strip())
+        for value in (
+            evidence.capture_ios_version,
+            evidence.capture_source_probe_build,
+        )
     )
     environment_matches = (
-        evidence.capture.get("ios_version") == evidence.environment.get("ios_version")
-        and evidence.capture.get("source_probe_build")
-        == evidence.environment.get("source_probe_build")
+        evidence.capture_ios_version == evidence.environment.ios_version
+        and evidence.capture_source_probe_build
+        == evidence.environment.source_probe_build
     )
     common_complete = (
         len(evidence.eligible_callbacks) >= evidence.minimum_callback_count
@@ -168,24 +175,24 @@ def _derive_verdict(
         reason = "environment-mismatch"
     elif len(in_range) != len(eligible):
         reason = "expected-location-inactive"
-    elif evidence.scenario == "ianygo-bluetooth" and (
+    elif scenario.requires_usb_disconnection and (
         manifest_usb_present or validation_usb_present
     ):
         reason = "apple-usb-present"
-    elif evidence.scenario == "ianygo-bluetooth" and (
-        evidence.connection.get("windows_apple_usb_status") != "absent"
+    elif scenario.requires_usb_disconnection and (
+        evidence.connection.windows_apple_usb_status != "absent"
         or validation_usb.status != "absent"
     ):
         reason = "apple-usb-status-unknown"
     elif (
-        evidence.scenario == "ianygo-bluetooth"
-        and evidence.connection.get("user_confirmed_usb_disconnected") is not True
+        scenario.requires_usb_disconnection
+        and evidence.connection.user_confirmed_usb_disconnected is not True
     ):
         reason = "usb-disconnection-unconfirmed"
     elif not source_complete:
         reason = "source-information-missing"
     elif source_complete and len({
-        record["is_produced_by_accessory"] for record in eligible
+        record.is_produced_by_accessory for record in eligible
     }) > 1:
         reason = "mixed-accessory-flags"
     else:
@@ -201,11 +208,13 @@ def validate_files(
     """Validate an artifact pair and return a deterministic Probe Verdict."""
 
     evidence = load_evidence(manifest_path, jsonl_path)
-    validation_usb = _validation_usb(evidence.scenario, usb_detector)
+    validation_usb = _validation_usb(
+        scenario_definition(evidence.scenario), usb_detector
+    )
     verdict, reason = _derive_verdict(evidence, validation_usb)
     return ProbeResult(
         session_id=evidence.session_id,
-        scenario=evidence.scenario,
+        scenario=evidence.scenario.value,
         verdict=verdict,
         reason_codes=(reason,),
         total_location_records=len(evidence.location_records),

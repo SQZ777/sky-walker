@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from sky_walker.accessory_probe import SCHEMA_VERSION
+from sky_walker.accessory_probe import SCHEMA_VERSION, scenario_definition
 from sky_walker import __version__
 from sky_walker.config import DEFAULT_LOCATION, Coordinate
 
@@ -36,11 +36,12 @@ def create_session(
 ) -> tuple[Path, Dict[str, Any]]:
     """Create one versioned Source Test Session manifest."""
     session_id = _new_session_id()
+    definition = scenario_definition(scenario)
     if location_product_version is None:
-        if scenario == "sky-walker-usb":
+        if definition.uses_sky_walker_version:
             location_product_version = f"sky-walker {__version__}"
-        elif scenario == "real-gps":
-            location_product_version = "not-applicable"
+        else:
+            location_product_version = definition.default_location_product_version
     latitude_step = 50.0 / 111_320.0
     second_latitude = (
         expected_location.latitude - latitude_step
@@ -50,7 +51,7 @@ def create_session(
     manifest: Dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "session_id": session_id,
-        "scenario": scenario,
+        "scenario": definition.scenario.value,
         "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "expected_location": {
             "latitude": expected_location.latitude,

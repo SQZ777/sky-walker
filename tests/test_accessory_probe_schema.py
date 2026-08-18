@@ -180,6 +180,29 @@ def test_duplicate_callback_location_identity_is_invalid(tmp_path):
         validate_files(FIXTURES / "pass.manifest.json", jsonl_path)
 
 
+@pytest.mark.parametrize(
+    "callback_sequences",
+    [
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 11],
+        [1, 2, 3, 4, 5, 6, 7, 8, 10, 9],
+        [2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    ],
+)
+def test_callback_sequence_must_start_at_one_and_remain_consecutive(
+    tmp_path, callback_sequences
+):
+    records = _record_fixtures()
+    for record, callback_sequence in zip(records[1:], callback_sequences):
+        record["callback_sequence"] = callback_sequence
+    jsonl_path = tmp_path / "invalid-callback-order.jsonl"
+    jsonl_path.write_text(
+        "\n".join(json.dumps(record) for record in records), encoding="utf-8"
+    )
+
+    with pytest.raises(ProbeInputError, match="callback_sequence must be consecutive"):
+        validate_files(FIXTURES / "pass.manifest.json", jsonl_path)
+
+
 def _manifest_fixture():
     return json.loads((FIXTURES / "pass.manifest.json").read_text(encoding="utf-8"))
 

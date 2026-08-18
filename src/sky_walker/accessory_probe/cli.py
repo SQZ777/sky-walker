@@ -7,19 +7,11 @@ import json
 import sys
 from pathlib import Path
 
-from sky_walker.accessory_probe import SCENARIOS
+from sky_walker.accessory_probe import SCENARIOS, scenario_definition
 from sky_walker.accessory_probe.session import create_session
 from sky_walker.accessory_probe.usb import AppleUsbEvidence, detect_apple_usb
 from sky_walker.accessory_probe.validator import ProbeInputError, validate_files
 from sky_walker.config import DEFAULT_LOCATION, parse_coordinate
-
-
-_SCENARIO_STEPS = {
-    "real-gps": "Disable Sky Walker and iAnyGo; use the iPhone's internal location source.",
-    "sky-walker-usb": "Connect USB and start a Sky Walker Location Override at the manifest coordinate.",
-    "ianygo-general": "Start iAnyGo General Mode at the manifest coordinate using its documented workflow.",
-    "ianygo-bluetooth": "Pair iPhone with this PC, start iAnyGo Bluetooth Game Mode, and keep USB unplugged.",
-}
 
 
 def add_probe_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -45,16 +37,17 @@ def add_probe_parser(subparsers: argparse._SubParsersAction) -> None:
 
 def run(args: argparse.Namespace) -> int:
     if args.probe_action == "new":
+        scenario = scenario_definition(args.scenario)
         try:
             expected_location = parse_coordinate(f"{args.latitude}, {args.longitude}")
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 3
         missing = []
-        if args.scenario in ("ianygo-general", "ianygo-bluetooth"):
+        if scenario.requires_location_product_version:
             if not args.location_product_version:
                 missing.append("--location-product-version")
-        if args.scenario == "ianygo-bluetooth":
+        if scenario.requires_usb_disconnection:
             if not args.bluetooth_adapter:
                 missing.append("--bluetooth-adapter")
             if not args.confirm_usb_disconnected:
@@ -67,7 +60,7 @@ def run(args: argparse.Namespace) -> int:
             return 3
         usb_evidence = AppleUsbEvidence(status="not-required", device_count=0)
         user_confirmation = None
-        if args.scenario == "ianygo-bluetooth":
+        if scenario.requires_usb_disconnection:
             usb_evidence = detect_apple_usb()
             user_confirmation = args.confirm_usb_disconnected
         path, manifest = create_session(
@@ -85,8 +78,8 @@ def run(args: argparse.Namespace) -> int:
         print(f"Source Test Session: {manifest['session_id']}")
         print(f"Manifest: {path}")
         print("On the iPhone, open Source Probe and enter this Session ID.")
-        print(_SCENARIO_STEPS[args.scenario])
-        if args.scenario == "ianygo-bluetooth":
+        print(scenario.operator_step)
+        if scenario.requires_usb_disconnection:
             print("Keep every physical Apple USB cable unplugged for the entire capture.")
         print("Capture Core Location callbacks for up to 120 seconds, then export the JSONL file.")
         return 0

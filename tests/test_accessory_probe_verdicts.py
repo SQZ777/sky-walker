@@ -193,10 +193,12 @@ def test_missing_environment_versions_are_inconclusive(tmp_path):
 
 def test_stabilization_records_remain_counted_but_do_not_affect_verdict(tmp_path):
     def prepend_transitional_records(records):
+        for record in records[1:]:
+            record["callback_sequence"] += 10
         transitional = []
         for second in range(10):
             record = dict(records[1])
-            record["callback_sequence"] = second + 11
+            record["callback_sequence"] = second + 1
             record["receipt_timestamp"] = f"2026-08-18T00:00:0{second}Z"
             record["location_timestamp"] = f"2026-08-18T00:00:0{second}Z"
             record["is_produced_by_accessory"] = False

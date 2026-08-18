@@ -73,6 +73,7 @@ Sky Walker 目前透過 Windows 上的 Apple developer service 對實體 iPhone 
 - **CLI validation contract:** A `probe validate` operation accepts one manifest and one JSONL artifact, validates their relationship and environment evidence, and emits both human-readable and machine-readable results.
 - **Standard scenarios:** The supported values are real GPS, Sky Walker USB, iAnyGo General, and iAnyGo Bluetooth. Arbitrary free-form source labels are not accepted in the first version.
 - **Schema versioning:** Manifest and callback records carry schema version 1. Callback records reference the Source Test Session ID.
+- **Callback identity:** Callback sequences start at 1 and must remain ordered and gap-free in JSONL order. Locations from the same callback use contiguous zero-based `location_index` values. Missing, reordered, or duplicated callback evidence is invalid.
 - **Manifest contents:** The manifest contains scenario, expected coordinate, session timing, iOS and app builds, Windows version, relevant location-product version, Bluetooth adapter information when applicable, and user-confirmed connection state.
 - **Callback contents:** Each record contains location timestamp, receipt timestamp, coordinates, altitude, horizontal and vertical accuracy, speed, course, source-information presence, and both Core Location source flags.
 - **Raw evidence preservation:** Every `CLLocation` in every delegate callback is written. The Probe does not keep only the last element and does not pre-filter stale or transitional samples.
@@ -84,8 +85,8 @@ Sky Walker 目前透過 Windows 上的 Apple developer service 對實體 iPhone 
 - **Stabilization window:** Validation excludes the first ten seconds from verdict calculation while preserving those records in the raw artifact.
 - **Sample requirement:** Validation needs at least ten post-stabilization callbacks and waits no longer than 120 seconds during capture guidance.
 - **Accessory pass rule:** Pass requires at least ten consecutive post-stabilization callbacks with non-nil source information and `isProducedByAccessory == true`, plus satisfied Bluetooth USB-disconnection evidence where relevant. Multiple `CLLocation` values delivered in one callback count as one callback.
-- **Fail rule:** Fail requires structurally complete evidence, a confirmed scenario, enough samples, an active expected location, and consistently false accessory attribution.
-- **Inconclusive rule:** Insufficient samples, mixed flags, nil source information, uncertain USB state, missing environment metadata, or an inactive expected location are inconclusive rather than fail.
+- **Fail rule:** Fail requires structurally complete evidence, a confirmed scenario, enough callbacks, an active expected location, and consistently false accessory attribution.
+- **Inconclusive rule:** Insufficient callbacks, mixed flags, nil source information, uncertain USB state, missing environment metadata, or an inactive expected location are inconclusive rather than fail.
 - **Coordinate sanity gate:** The first benchmark requires the observed position to be within 25 metres horizontally of the expected position. Altitude, speed, course, and reported accuracy are recorded but do not determine the initial Probe Verdict.
 - **Common stimulus:** Each scenario first uses the project Default Location. If static delivery cannot produce ten callbacks, it uses the same approximately 50-metre two-point route at 1 Hz and about 5 km/h.
 - **Evidence storage:** Raw run artifacts are locally retained outside version control. Only manually de-identified fixtures are committed.
@@ -98,8 +99,8 @@ Sky Walker 目前透過 Windows 上的 Apple developer service 對實體 iPhone 
 
 - **Primary automated seam:** Treat manifest plus JSONL as input and Probe Verdict, summaries, and process status as output. Tests assert externally visible validation behavior rather than helper functions or internal state.
 - **Schema coverage:** Test supported version 1 records, unknown versions, missing required metadata, malformed JSONL, duplicate or mismatched Session IDs, and mismatched scenarios.
-- **Verdict coverage:** Use de-identified fixtures for pass, fail, insufficient samples, mixed flags, nil source information, active USB, unknown USB state, missing versions, stale samples, and coordinate mismatch.
-- **Boundary coverage:** Verify that the first ten seconds never affect the verdict, that raw records remain present, and that exactly ten valid consecutive samples can pass.
+- **Verdict coverage:** Use de-identified fixtures for pass, fail, insufficient callbacks, mixed flags, nil source information, active USB, unknown USB state, missing versions, stale samples, and coordinate mismatch.
+- **Boundary coverage:** Verify that the first ten seconds never affect the verdict, that raw records remain present, and that exactly ten valid consecutive callbacks can pass. Reject callback gaps, reordering, duplicate identities, and non-contiguous per-callback location indices.
 - **USB coverage:** Inject the Windows physical-USB detector at the CLI boundary and test present, absent, and detection-error outcomes without requiring real hardware.
 - **CLI coverage:** Exercise session creation and validation through the command surface, asserting manifest output, human summary, machine-readable result, and distinct process statuses.
 - **iOS serialization seam:** Test the callback-to-record mapper and JSONL writer through their observable serialized output, preserving arrays, timestamps, nil source information, negative or unavailable measurement values, and independent source flags.
