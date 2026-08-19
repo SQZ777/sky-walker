@@ -20,7 +20,10 @@ from sky_walker.errors import SkyWalkerError
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sky-walker",
-        description="Override a USB-connected iPhone's GPS location for app testing.",
+        description=(
+            "Test iPhone location behavior with USB Location Override or the "
+            "experimental BLE accessory spike."
+        ),
     )
     parser.add_argument("--version", action="version", version=f"sky-walker {__version__}")
     parser.add_argument("--udid", help="Target device UDID (needed only if several are connected).")
@@ -29,6 +32,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("gui", help="Open the desktop map GUI (needs the [gui] extra).")
     sub.add_parser("doctor", help="Check that every prerequisite for a session is met.")
     sub.add_parser("clear", help="Release any active override and return to real GPS.")
+    from sky_walker.accessory_probe.cli import add_probe_parser
+    from sky_walker.ble_lns.cli import add_ble_parser
+
+    add_probe_parser(sub)
+    add_ble_parser(sub)
     # No subcommand => interactive mode (handled in main()).
     return parser
 
@@ -48,6 +56,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             clear_once(args.udid)
             print("Override cleared — device is back on its real GPS.")
             return 0
+        if args.command == "probe":
+            from sky_walker.accessory_probe.cli import run
+            return run(args)
+        if args.command == "ble-spike":
+            from sky_walker.ble_lns.cli import run as run_ble_spike
+            return run_ble_spike(args)
         # Default: interactive mode.
         from sky_walker.interactive import run_interactive
         return run_interactive(args.udid)

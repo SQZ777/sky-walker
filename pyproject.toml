@@ -5,17 +5,32 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sky-walker"
 version = "0.1.0"
-description = "Override a USB-connected iPhone's GPS location from Windows, for testing iOS apps."
+description = "Test iPhone location behavior from Windows over USB or an experimental BLE accessory feed."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     # See docs/adr/0001 — the whole tool is built on this, imported as a library.
     "pymobiledevice3>=10.7",
+    # Accessory Probe validates exported evidence against its packaged JSON Schemas.
+    "jsonschema>=4.23",
 ]
 
 [project.optional-dependencies]
 # Desktop GUI front-end (sky-walker gui). Optional so the CLI installs lean.
 gui = ["pywebview>=5.0"]
+bluetooth = [
+    "winrt-Windows.Devices.Bluetooth>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.Devices.Bluetooth.GenericAttributeProfile>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.Devices.Enumeration>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.Foundation>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.Storage.Streams>=3.2; sys_platform == 'win32'",
+]
+# Contributor tooling. Runtime installs do not need these packages.
+dev = [
+    "mypy>=1.18",
+    "pytest>=8.4",
+    "types-jsonschema>=4.23",
+]
 
 [project.scripts]
 sky-walker = "sky_walker.cli:main"
@@ -26,3 +41,4 @@ where = ["src"]
 [tool.setuptools.package-data]
 # Ship the GUI's web assets inside the package so `sky-walker gui` can load them.
 "sky_walker.gui" = ["web/*.html"]
+"sky_walker.accessory_probe" = ["schemas/*.json"]

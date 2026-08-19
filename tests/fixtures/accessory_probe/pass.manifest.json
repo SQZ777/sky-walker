@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "session_id": "ABCD2345",
+  "scenario": "ianygo-bluetooth",
+  "created_at": "2026-08-18T00:00:00Z",
+  "expected_location": {
+    "latitude": 25.073944586589487,
+    "longitude": 121.51104972333346,
+    "horizontal_tolerance_m": 25.0
+  },
+  "timing": {
+    "stabilization_seconds": 10,
+    "maximum_capture_seconds": 120,
+    "minimum_post_stabilization_callbacks": 10
+  },
+  "stimulus": {
+    "primary": {
+      "kind": "static",
+      "latitude": 25.073944586589487,
+      "longitude": 121.51104972333346
+    },
+    "fallback": {
+      "kind": "two-point-route",
+      "waypoints": [
+        {"latitude": 25.073944586589487, "longitude": 121.51104972333346},
+        {"latitude": 25.07439374378837, "longitude": 121.51104972333346}
+      ],
+      "update_frequency_hz": 1.0,
+      "movement_speed_kmh": 5.0
+    }
+  },
+  "environment": {
+    "ios_version": "26.4",
+    "source_probe_build": "1",
+    "windows_version": "Windows-11",
+    "location_product_version": "4.11.11",
+    "bluetooth_adapter": "Intel Wireless Bluetooth"
+  },
+  "connection_evidence": {
+    "user_confirmed_usb_disconnected": true,
+    "windows_apple_usb_status": "absent",
+    "windows_apple_usb_device_count": 0
+  }
+}
