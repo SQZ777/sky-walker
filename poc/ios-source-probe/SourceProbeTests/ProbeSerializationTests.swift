@@ -3,6 +3,14 @@ import Foundation
 import XCTest
 @testable import SourceProbe
 
+private final class TestLocation: CLLocation, @unchecked Sendable {
+    var testSourceInformation: CLLocationSourceInformation?
+
+    override var sourceInformation: CLLocationSourceInformation? {
+        testSourceInformation
+    }
+}
+
 final class ProbeSerializationTests: XCTestCase {
     func testJSONLPreservesEveryCallbackLocationAndNilSourceInformation() throws {
         let timestamp = Date(timeIntervalSince1970: 1_776_124_800)
@@ -10,7 +18,7 @@ final class ProbeSerializationTests: XCTestCase {
             softwareSimulationState: false,
             andExternalAccessoryState: true
         )
-        let accessoryLocation = CLLocation(
+        let accessoryLocation = TestLocation(
             coordinate: CLLocationCoordinate2D(latitude: 25.073944586589487, longitude: 121.51104972333346),
             altitude: 5,
             horizontalAccuracy: 3,
@@ -22,7 +30,8 @@ final class ProbeSerializationTests: XCTestCase {
             timestamp: timestamp,
             sourceInfo: source
         )
-        let noSourceLocation = CLLocation(
+        accessoryLocation.testSourceInformation = source
+        let noSourceLocation = TestLocation(
             coordinate: CLLocationCoordinate2D(latitude: 25.0740, longitude: 121.5111),
             altitude: 6,
             horizontalAccuracy: 5,
